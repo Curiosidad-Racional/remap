@@ -761,6 +761,27 @@ int main(int argc, char *argv[]) {
               mod0_key0_mod1_remap(KEY_LEFTALT, KEY_B, KEY_LEFTCTRL, KEY_LEFT);
             break;
           }
+        } else if (check_key2(KEY_LEFTALT, KEY_102ND)) {
+          switch (check_window_classname()) {
+          case WC_OTHERS:
+            if (select_mode)
+              mod0_key0_mod1_mod1_remap(KEY_LEFTALT, KEY_102ND, KEY_LEFTCTRL,
+                                        KEY_LEFTSHIFT, KEY_HOME);
+            else
+              mod0_key0_mod1_remap(KEY_LEFTALT, KEY_102ND, KEY_LEFTCTRL, KEY_HOME);
+            break;
+          }
+        } else if (check_key3(KEY_LEFTALT, KEY_LEFTSHIFT, KEY_102ND)) { // KEY_RIGHTSHIFT
+          switch (check_window_classname()) {
+          case WC_OTHERS:
+            if (select_mode)
+              mod0_key0_mod1_mod1_remap(KEY_LEFTALT, KEY_102ND, KEY_LEFTCTRL,
+                                        KEY_LEFTSHIFT, KEY_END);
+            else
+              mod0_mod0_key0_mod1_remap(KEY_LEFTALT, KEY_LEFTSHIFT, KEY_102ND,
+                                        KEY_LEFTCTRL, KEY_END);
+            break;
+          }
         }
         // COMMANDS
         else if (check_key2(KEY_LEFTALT, KEY_X)) {
@@ -812,7 +833,15 @@ int main(int argc, char *argv[]) {
           }
         }
         // EDITION
-        else if (check_key2(KEY_LEFTCTRL, KEY_D)) {
+        else if (check_key1(KEY_DELETE) || check_key1(KEY_BACKSPACE)) {
+          switch (check_window_classname()) {
+          case WC_QUTEBROWSER:
+          case WC_OTHERS:
+            if (select_mode)
+              select_mode = false;
+            break;
+          }
+        } else if (check_key2(KEY_LEFTCTRL, KEY_D)) {
           switch (check_window_classname()) {
           case WC_QUTEBROWSER:
             if (select_mode)
@@ -937,14 +966,14 @@ int main(int argc, char *argv[]) {
           case WC_TERM:
           case WC_OTHERS:
             group_key = GK_CTRL_X;
-            char text[] = "C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F}";
+            char text[] = "C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}";
             show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
             continue;
           }
         }
         break;
       case GK_CTRL_X:
-        if (check_key1(KEY_ESC)) {
+        if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
@@ -978,6 +1007,9 @@ int main(int argc, char *argv[]) {
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_5)) {
           key0_mod1_remap(KEY_5, KEY_LEFTCTRL, KEY_N);
+          group_key = GK_EMACS;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_S)) {
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_F)) {
@@ -1054,7 +1086,7 @@ int main(int argc, char *argv[]) {
             continue;
         break;
       case GK_CTRL_C:
-        if (check_key1(KEY_ESC)) {
+        if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
@@ -1078,7 +1110,7 @@ int main(int argc, char *argv[]) {
             continue;
         break;
       case GK_CTRL_X__R:
-        if (check_key1(KEY_ESC)) {
+        if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
@@ -1094,7 +1126,7 @@ int main(int argc, char *argv[]) {
             continue;
         break;
       case GK_CTRL_X__T:
-        if (check_key1(KEY_ESC)) {
+        if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
