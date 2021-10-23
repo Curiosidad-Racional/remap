@@ -1313,7 +1313,6 @@ int main(int argc, char *argv[]) {
             makro_events_idx = 0;
             makro_recording = false;
           } else if (makro_events_idx) {
-            repeat = repeat? ++repeat: 2;
             switch (repeat) {
             case 1:
               repeat = 0;
