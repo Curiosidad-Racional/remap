@@ -766,6 +766,8 @@ int main(int argc, char *argv[]) {
       return 2;
   }
 
+  char text_repeat[32];
+  char text[256];
   unsigned int repeat = 0;
   bool skip_remap = false;
   bool select_mode = false;
@@ -818,13 +820,12 @@ int main(int argc, char *argv[]) {
           case WC_TERM:
           case WC_OTHERS:
             repeat = repeat * 10 + (digit-1) % 10;
-            char text[32];
             if (makro_recording) {
-              sprintf(text, "[RM] C-%d", repeat);
+              sprintf(text_repeat, "[RM] C-%d", repeat);
             } else {
-              sprintf(text, "C-%d", repeat);
+              sprintf(text_repeat, "C-%d", repeat);
             }
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            show_text_window(text_repeat, 0xffcccccc, 0xffa32cc4, g_focused_window);
             continue;
           }
         }
@@ -1211,13 +1212,16 @@ int main(int argc, char *argv[]) {
           switch (check_window_classname()) {
           case WC_OTHERS:
             group_key = GK_CTRL_C;
-            if (makro_recording) {
-              char text[] = "[RM] C+C -> {T,C+C,C+D,C+E,C+0-9}";
-              show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            if (repeat) {
+              strcpy(text, text_repeat);
+              strcat(text, " ");
+            } else if (makro_recording) {
+              strcpy(text, "[RM] ");
             } else {
-              char text[] = "C+C -> {T,C+C,C+D,C+E,C+0-9}";
-              show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+              text[0] = '\0';
             }
+            strcat(text, "C+C -> {T,C+C,C+D,C+E,C+0-9}");
+            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
             continue;
           }
         } else if (check_key2(KEY_LEFTCTRL, KEY_X)) {
@@ -1225,13 +1229,16 @@ int main(int argc, char *argv[]) {
           case WC_TERM:
           case WC_OTHERS:
             group_key = GK_CTRL_X;
-            if (makro_recording) {
-              char text[] = "[RM] C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}";
-              show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            if (repeat) {
+              strcpy(text, text_repeat);
+              strcat(text, " ");
+            } else if (makro_recording) {
+              strcpy(text, "[RM] ");
             } else {
-              char text[] = "C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}";
-              show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+              text[0] = '\0';
             }
+            strcat(text, "C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}");
+            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
             continue;
           }
         }
@@ -1288,23 +1295,29 @@ int main(int argc, char *argv[]) {
           continue;
         } else if (check_key1(KEY_R)) {
           group_key = GK_CTRL_X__R;
-          if (makro_recording) {
-            char text[] = "[RM] C+X R -> {M,B}";
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+          if (repeat) {
+            strcpy(text, text_repeat);
+            strcat(text, " ");
+          } else if (makro_recording) {
+            strcpy(text, "[RM] ");
           } else {
-            char text[] = "C+X R -> {M,B}";
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            text[0] = '\0';
           }
+          strcat(text, "C+X R -> {M,B}");
+          show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
           continue;
         } else if (check_key1(KEY_T)) {
           group_key = GK_CTRL_X__T;
-          if (makro_recording) {
-            char text[] = "[RM] C+X T -> {0,2,M,O,S-M,S-O}";
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+          if (repeat) {
+            strcpy(text, text_repeat);
+            strcat(text, " ");
+          } else if (makro_recording) {
+            strcpy(text, "[RM] ");
           } else {
-            char text[] = "C+X T -> {0,2,M,O,S-M,S-O}";
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            text[0] = '\0';
           }
+          strcat(text, "C+X T -> {0,2,M,O,S-M,S-O}");
+          show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
           continue;
         }
         // MACROS
@@ -1337,7 +1350,7 @@ int main(int argc, char *argv[]) {
           makro_events_idx = 0;
           makro_recording = true;
           group_key = GK_EMACS;
-          char text[] = "[RECORDING MACRO]";
+          strcpy(text, "[RECORDING MACRO]");
           show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
           continue;
         } else if (check_key2(KEY_LEFTSHIFT, KEY_9)) {
