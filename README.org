@@ -15,4 +15,5 @@ remap [-s] [-v]
 sudo ./run.sh [-s] [-v]
 #+end_src
 
-write ~sudo ./run.sh~ command, with yout preferred options, press /Enter/ and wait until prompt shows again.
+write ~sudo ./run.sh~ command, with yout preferred options, press
+/Enter/ and don't press any key until prompt shows again.
