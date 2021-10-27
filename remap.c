@@ -10,7 +10,7 @@
 #define MAKRO_MAX 1024
 //#define KEY_DELAY 100000
 
-
+bool verbose = false;
 enum group_cls_e {
     WC_VOID, WC_EMACS, WC_TERM, WC_QUTEBROWSER, WC_OTHERS
 };
@@ -260,6 +260,7 @@ char *key_names[] = {
     "KEY_KP3",
     "KEY_KP0",
     "KEY_KPDOT",
+    "unknown",
     "KEY_ZENKAKUHANKAKU",
     "KEY_102ND",
     "KEY_F11",
@@ -480,7 +481,8 @@ struct input_event makro_events[] = {
     [0 ... MAKRO_MAX] = {.type = EV_KEY, .code = 0, .value = 0}};
 
 void write_event(const struct input_event event) {
-  //fprintf(stderr, "%d, %s, %d\n", event.type, key_names[event.code], event.value);
+  if (verbose)
+    fprintf(stderr, "%d, %s, %d\n", event.type, key_names[event.code], event.value);
   fwrite(&event, sizeof(event), 1, stdout);
   //fflush(stdout);
   switch (event.value) {
@@ -503,12 +505,11 @@ void write_event(const struct input_event event) {
   }
   makro_events[makro_events_idx].value = event.value;
   makro_events[makro_events_idx].code = event.code;
-  //fprintf(stderr, "RECORDED %d, %d, %d\n", makro_events[makro_events_idx].type, makro_events[makro_events_idx].code, makro_events[makro_events_idx].value);
   if (++makro_events_idx > MAKRO_MAX) {
     makro_recording = false;
     makro_events_idx = 0;
     char text[] = "MAKRO MAX EXCEDED";
-    show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+    show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
   }
 }
 
@@ -751,11 +752,14 @@ int main(int argc, char *argv[]) {
   __u16 digit;
   __u16 right_alt = KEY_RIGHTALT;
   __u16 left_right_ctrl = KEY_LEFTCTRL;
-  while ((opt = getopt(argc, argv, "s")) != EOF)
+  while ((opt = getopt(argc, argv, "sv")) != EOF)
     switch (opt) {
     case 's':
       right_alt = KEY_LEFTCTRL;
       left_right_ctrl = KEY_RIGHTALT;
+      break;
+    case 'v':
+      verbose = true;
       break;
     }
 
@@ -780,7 +784,6 @@ int main(int argc, char *argv[]) {
       //fflush(stdout);
       continue;
     }
-    // fprintf(stderr, "%u, %u, %d\n", event.type, event.code, event.value);
     if (event.code == KEY_RIGHTALT)
       event.code = right_alt;
     else if (event.code == KEY_LEFTCTRL || event.code == KEY_RIGHTCTRL)
@@ -809,7 +812,6 @@ int main(int argc, char *argv[]) {
       if (skip_remap) {
         break;
       }
-      // fprintf(stderr, "group: %d.\n", group_key);
       switch (group_key) {
       case GK_EMACS:
         // REPEAT
@@ -825,7 +827,7 @@ int main(int argc, char *argv[]) {
             } else {
               sprintf(text_repeat, "C-%d", repeat);
             }
-            show_text_window(text_repeat, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            show_text_window(text_repeat, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
         }
@@ -1221,7 +1223,7 @@ int main(int argc, char *argv[]) {
               text[0] = '\0';
             }
             strcat(text, "C+C -> {T,C+C,C+D,C+E,C+0-9}");
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
         } else if (check_key2(KEY_LEFTCTRL, KEY_X)) {
@@ -1238,7 +1240,7 @@ int main(int argc, char *argv[]) {
               text[0] = '\0';
             }
             strcat(text, "C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}");
-            show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+            show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
         }
@@ -1304,7 +1306,7 @@ int main(int argc, char *argv[]) {
             text[0] = '\0';
           }
           strcat(text, "C+X R -> {M,B}");
-          show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+          show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
           continue;
         } else if (check_key1(KEY_T)) {
           group_key = GK_CTRL_X__T;
@@ -1317,7 +1319,7 @@ int main(int argc, char *argv[]) {
             text[0] = '\0';
           }
           strcat(text, "C+X T -> {0,2,M,O,S-M,S-O}");
-          show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+          show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
           continue;
         }
         // MACROS
@@ -1351,7 +1353,7 @@ int main(int argc, char *argv[]) {
           makro_recording = true;
           group_key = GK_EMACS;
           strcpy(text, "[RECORDING MACRO]");
-          show_text_window(text, 0xffcccccc, 0xffa32cc4, g_focused_window);
+          show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
           continue;
         } else if (check_key2(KEY_LEFTSHIFT, KEY_9)) {
           if (makro_recording) {
@@ -1360,16 +1362,19 @@ int main(int argc, char *argv[]) {
               --makro_events_idx;
             if (makro_events_idx && makro_events[makro_events_idx - 1].code == KEY_X)
               --makro_events_idx;
-            while (makro_events_idx && makro_events[makro_events_idx - 1].code == KEY_LEFTCTRL
+            while (makro_events_idx
+                   && makro_events[makro_events_idx - 1].code == KEY_LEFTCTRL
                    && makro_events[makro_events_idx - 1].value == 1)
               --makro_events_idx;
-            /* fprintf(stderr, "RECODED MACRO [\n"); */
-            /* for (unsigned short i = 0; i < makro_events_idx; ++i) */
-            /*   fprintf(stderr, "  %d, %s, %d\n", */
-            /*           makro_events[i].type, */
-            /*           key_names[makro_events[i].code], */
-            /*           makro_events[i].value); */
-            /* fprintf(stderr, "] RECORDED MACRO\n"); */
+            if (verbose) {
+              fprintf(stderr, "RECORDED MACRO [\n");
+              for (unsigned short i = 0; i < makro_events_idx; ++i)
+                fprintf(stderr, "  %d, %s, %d\n",
+                        makro_events[i].type,
+                        key_names[makro_events[i].code],
+                        makro_events[i].value);
+              fprintf(stderr, "] RECORDED MACRO\n");
+            }
           }
           group_key = GK_EMACS;
           show_text_window(NULL, 0, 0, g_focused_window);
