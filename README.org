@@ -12,8 +12,11 @@ remap [-s] [-v]
 - Helper command:
 
 #+begin_src sh
-sudo ./run.sh [-s] [-v]
+sudo ./run.sh [-s] [-v] [usb|serio]
 #+end_src
+
+- usb :: usb keyboard (default value)
+- serio :: serial keyboard (default value when usb not found)
 
 write ~sudo ./run.sh~ command, with your preferred options, press
 /Enter/ and don't press any key until prompt shows again.
