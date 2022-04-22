@@ -14,9 +14,12 @@ do
     esac
     shift
 done
-pgrep -x remap >/dev/null && pkill -x intercept
-wait
-sleep 1
+PID=$(pgrep -x remap)
+if [ -n "$PID" ]
+then
+    pkill -x intercept
+    kill "$PID"
+fi
 DEV="/dev/input/$(sed -nr '/leds/{s/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p}' /proc/bus/input/devices|$FILT -1)"
 exec > .remap.log 2>&1
 if [ -n "$MODE" ]

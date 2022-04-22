@@ -7,8 +7,9 @@
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 #include <getopt.h>
-#define MAKRO_MAX 1024
-//#define KEY_DELAY 100000
+#define MAKRO_MAX     1024
+#define WRITE_DELAY  20000
+#define REPEAT_DELAY 20000
 
 bool verbose = false;
 enum group_cls_e {
@@ -16,10 +17,10 @@ enum group_cls_e {
 };
 
 enum group_key_e {
-    GK_EMACS,
+    GK_NULL,
     GK_CTRL_X, GK_CTRL_X__R, GK_CTRL_X__T,
     GK_CTRL_C,
-} group_key = GK_EMACS;
+} group_key = GK_NULL;
 
 
 xcb_connection_t *g_conn;
@@ -33,7 +34,10 @@ void store_focused_window() {
   free(input_focus);
 }
 
+bool temp_remap = false;
 enum group_cls_e check_window_classname() {
+  if (temp_remap)
+      return WC_OTHERS;
   xcb_grab_server(g_conn);
   store_focused_window();
   xcb_get_property_reply_t *reply = xcb_get_property_reply(
@@ -52,19 +56,16 @@ enum group_cls_e check_window_classname() {
       return WC_VOID;
 
   char* wm_class = (char*)xcb_get_property_value(reply);
-  if (strcmp(wm_class, "emacs") == 0) {
-    free(reply);
+  free(reply);
+  if (strcmp(wm_class, "Alacritty") == 0 ||
+      strcmp(wm_class, "emacs") == 0) {
     return WC_EMACS;
   } else if (strcmp(wm_class, "qutebrowser") == 0) {
-    free(reply);
     return WC_QUTEBROWSER;
-  } else if (strcmp(wm_class, "Alacritty") == 0 ||
-             strcmp(wm_class, "urxvt") == 0 ||
+  } else if (strcmp(wm_class, "urxvt") == 0 ||
              strcmp(wm_class, "st-256color") == 0) {
-    free(reply);
     return WC_TERM;
   } else {
-    free(reply);
     return WC_OTHERS;
   }
 }
@@ -483,7 +484,7 @@ struct input_event makro_events[] = {
 void write_event(const struct input_event event) {
   if (verbose)
     fprintf(stderr, "%d, %s, %d\n", event.type, key_names[event.code], event.value);
-  fwrite(&event, sizeof(event), 1, stdout);
+  fwrite(&event, sizeof(struct input_event), 1, stdout);
   //fflush(stdout);
   switch (event.value) {
   case 0:
@@ -736,8 +737,17 @@ void mod0_mod0_key0_remap_mod_remap_remap(const __u16 mod, const __u16 mod1,
 
 void clear_fakes() {
   struct input_event fake_event = {.type = EV_KEY};
+  // First undo keyup
   for (unsigned short i = 1; i < 248; ++i) {
-    if (fakboard[i] != keyboard[i]) {
+    if (!keyboard[i] && fakboard[i] != keyboard[i]) {
+      fake_event.code = i;
+      fake_event.value = keyboard[i];
+      write_event(fake_event);
+    }
+  }
+  // Second undo keydown
+  for (unsigned short i = 1; i < 248; ++i) {
+    if (keyboard[i] && fakboard[i] != keyboard[i]) {
       fake_event.code = i;
       fake_event.value = keyboard[i];
       write_event(fake_event);
@@ -772,15 +782,26 @@ int main(int argc, char *argv[]) {
 
   char text_repeat[32];
   char text[256];
-  unsigned int repeat = 0;
   bool skip_remap = false;
   bool select_mode = false;
-  struct input_event event;
+  const struct input_event evsyn = {.type = EV_SYN, .code = SYN_REPORT, .value = 0};
+  struct input_event event = {.type = EV_KEY, .code = 1, .value = 0};
+  unsigned int repeat = sizeof(key_names)/sizeof(key_names[0]);
+  fwrite(&event, sizeof(struct input_event), 1, stdout);
+  //fflush(stdout);
+  while (++(event.code) < repeat) {
+    write_event(evsyn);
+    //fflush(stdout);
+    usleep(WRITE_DELAY);
+    fwrite(&event, sizeof(struct input_event), 1, stdout);
+    //fflush(stdout);
+  }
+  repeat = 0;
   while (fread(&event, sizeof(event), 1, stdin) == 1) {
     if (event.type == EV_MSC && event.code == MSC_SCAN)
       continue;
     if (event.type != EV_KEY) {
-      fwrite(&event, sizeof(event), 1, stdout);
+      fwrite(&event, sizeof(struct input_event), 1, stdout);
       //fflush(stdout);
       continue;
     }
@@ -805,7 +826,13 @@ int main(int argc, char *argv[]) {
       }
       keyboard_total += 1 - keyboard[event.code];
       keyboard[event.code] = 1;
-      if (check_key2(KEY_ESC, KEY_SPACE)) {
+      if (check_key2(KEY_CAPSLOCK, KEY_LEFTSHIFT)) {
+        if (skip_remap)
+          skip_remap = false;
+        temp_remap = true;
+        continue;
+      }
+      if (check_key2(KEY_CAPSLOCK, KEY_LEFTALT)) {
         skip_remap = !skip_remap;
         continue;
       }
@@ -813,7 +840,7 @@ int main(int argc, char *argv[]) {
         break;
       }
       switch (group_key) {
-      case GK_EMACS:
+      case GK_NULL:
         // REPEAT
         digit = check_key1_digit(KEY_LEFTCTRL);
         if (digit) {
@@ -822,6 +849,7 @@ int main(int argc, char *argv[]) {
           case WC_TERM:
           case WC_OTHERS:
             repeat = repeat * 10 + (digit-1) % 10;
+            if (!repeat) break;
             if (makro_recording) {
               sprintf(text_repeat, "[RM] C-%d", repeat);
             } else {
@@ -830,6 +858,10 @@ int main(int argc, char *argv[]) {
             show_text_window(text_repeat, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
+        }
+        // REPLACEMENTS
+        else if (check_key2(KEY_RIGHTALT, KEY_ESC)) {
+          mod1_key0_remap(KEY_RIGHTALT, KEY_ESC, KEY_GRAVE); // KEY_BACKSLASH
         }
         // CTRL MOVEMENT
         else if (check_key2(KEY_LEFTCTRL, KEY_N)) {
@@ -1222,7 +1254,7 @@ int main(int argc, char *argv[]) {
             } else {
               text[0] = '\0';
             }
-            strcat(text, "C+C -> {T,C+C,C+D,C+E,C+0-9}");
+            strcat(text, "C+C -> {T,C+A,C+B,C+C,C+D,C+E,C+F,C+N,C+P,C+0-9}");
             show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
@@ -1243,55 +1275,59 @@ int main(int argc, char *argv[]) {
             show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
-        }
+        } else if (temp_remap && (
+                    check_key1(KEY_ENTER) ||
+                    check_key1(KEY_TAB) ||
+                    check_key1(KEY_ESC)))
+          temp_remap = false;
         break;
       case GK_CTRL_X:
         if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (check_key1(KEY_B)) {
           key0_mod1_mod1_remap(KEY_B, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_A);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_U)) {
           key0_mod1_mod1_remap(KEY_U, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_T);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_K)) {
           key0_mod1_remap(KEY_K, KEY_LEFTCTRL, KEY_W);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_O)) {
           key0_mod1_remap(KEY_O, KEY_LEFTCTRL, KEY_TAB);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTSHIFT, KEY_O)) {
           key0_mod1_mod1_remap(KEY_O, KEY_LEFTSHIFT, KEY_LEFTCTRL, KEY_TAB);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_2)) {
           key0_mod1_remap(KEY_2, KEY_LEFTCTRL, KEY_T);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_3)) {
           key0_mod1_remap(KEY_3, KEY_LEFTCTRL, KEY_T);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_5)) {
           key0_mod1_remap(KEY_5, KEY_LEFTCTRL, KEY_N);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_S)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_F)) {
           mod1_key0_remap(KEY_LEFTCTRL, KEY_F, KEY_O);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_C)) {
           //mod1_key0_mod1_remap(KEY_LEFTCTRL, KEY_C, KEY_LEFTSHIFT, KEY_W);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           delete_focused_window();
           continue;
@@ -1339,19 +1375,20 @@ int main(int argc, char *argv[]) {
               for (unsigned short i = 0; i < makro_events_idx; ++i)
                 write_event(makro_events[i]);
               while (--repeat) {
-                //usleep(KEY_DELAY);
+                write_event(evsyn);
+                usleep(REPEAT_DELAY);
                 for (unsigned short i = 0; i < makro_events_idx; ++i)
                   write_event(makro_events[i]);
               }
             }
           }
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (check_key2(KEY_LEFTSHIFT, KEY_8)) {
           makro_events_idx = 0;
           makro_recording = true;
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           strcpy(text, "[RECORDING MACRO]");
           show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
           continue;
@@ -1376,7 +1413,7 @@ int main(int argc, char *argv[]) {
               fprintf(stderr, "] RECORDED MACRO\n");
             }
           }
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (!is_mod(event.code))
@@ -1384,72 +1421,87 @@ int main(int argc, char *argv[]) {
         break;
       case GK_CTRL_C:
         if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (check_key1(KEY_T)) {
           key0_remap_remap(KEY_T, KEY_F6, KEY_F6);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_A)) {
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_B)) {
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_C)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_D)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_E)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_F)) {
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_N)) {
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_P)) {
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1_digit(KEY_LEFTCTRL)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (!is_mod(event.code))
             continue;
         break;
       case GK_CTRL_X__R:
         if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (check_key1(KEY_M)) {
           key0_mod1_remap(KEY_M, KEY_LEFTCTRL, KEY_D);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_B)) {
           key0_mod1_mod1_remap(KEY_B, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_O);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (!is_mod(event.code))
             continue;
         break;
       case GK_CTRL_X__T:
         if (check_key1(KEY_ESC) || check_key2(KEY_LEFTCTRL, KEY_G)) {
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
           continue;
         } else if (check_key1(KEY_0)) {
           key0_mod1_remap(KEY_0, KEY_LEFTCTRL, KEY_W);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_2)) {
           key0_mod1_remap(KEY_2, KEY_LEFTCTRL, KEY_T);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_O)) {
           key0_mod1_remap(KEY_O, KEY_LEFTCTRL, KEY_PAGEDOWN);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTSHIFT, KEY_O)) {
           mod0_key0_mod1_remap(KEY_LEFTSHIFT, KEY_O, KEY_LEFTCTRL, KEY_PAGEUP);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1(KEY_M)) {
           key0_mod1_mod1_remap(KEY_M, KEY_LEFTSHIFT, KEY_LEFTCTRL, KEY_PAGEDOWN);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTSHIFT, KEY_M)) {
           key0_mod1_mod1_remap(KEY_M, KEY_LEFTSHIFT, KEY_LEFTCTRL, KEY_PAGEUP);
-          group_key = GK_EMACS;
+          group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (!is_mod(event.code))
             continue;
@@ -1462,7 +1514,8 @@ int main(int argc, char *argv[]) {
       case 0:
         write_event(event);
         while (--repeat) {
-          //usleep(KEY_DELAY);
+          write_event(evsyn);
+          usleep(REPEAT_DELAY);
           event.value = 0;
           write_event(event);
           event.value = 1;
@@ -1473,7 +1526,8 @@ int main(int argc, char *argv[]) {
         fake_events[0].value = 1;
         write_event(fake_events[0]);
         while (--repeat) {
-          //usleep(KEY_DELAY);
+          write_event(evsyn);
+          usleep(REPEAT_DELAY);
           fake_events[0].value = 0;
           write_event(fake_events[0]);
           fake_events[0].value = 1;
@@ -1481,17 +1535,26 @@ int main(int argc, char *argv[]) {
         }
         break;
       default:
-        for (unsigned short i = 0; i < fake_events_setted; ++i)
+        write_event(fake_events[0]);
+        for (unsigned short i = 1; i < fake_events_setted; ++i) {
+          write_event(evsyn);
+          usleep(WRITE_DELAY);
           write_event(fake_events[i]);
+        }
         while (--repeat) {
-          //usleep(KEY_DELAY);
-          for (unsigned short i = 0; i < fake_events_setted; ++i)
+          write_event(evsyn);
+          usleep(REPEAT_DELAY);
+          write_event(fake_events[0]);
+          for (unsigned short i = 1; i < fake_events_setted; ++i) {
+            write_event(evsyn);
+            usleep(WRITE_DELAY);
             write_event(fake_events[i]);
+          }
         }
       }
       continue;
     case 2:
-      if (group_key != GK_EMACS || repeat)
+      if (group_key != GK_NULL || repeat)
         continue;
       break;
     }
@@ -1506,8 +1569,12 @@ int main(int argc, char *argv[]) {
       write_event(fake_events[0]);
       break;
     default:
-      for (unsigned short i = 0; i < fake_events_setted; ++i)
+      write_event(fake_events[0]);
+      for (unsigned short i = 1; i < fake_events_setted; ++i) {
+        write_event(evsyn);
+        usleep(WRITE_DELAY);
         write_event(fake_events[i]);
+      }
     }
   }
   if (g_text_window)
