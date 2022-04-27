@@ -42,7 +42,6 @@ static xcb_atom_t intern_atom(xcb_connection_t *conn, const char *atom)
 
 
 int main(void) {
-    sleep(5);
     xcb_connection_t *conn = xcb_connect(NULL, NULL);
     xcb_grab_server(conn);
     printf("Getting focus\n");

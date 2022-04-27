@@ -785,17 +785,18 @@ int main(int argc, char *argv[]) {
   bool skip_remap = false;
   bool select_mode = false;
   const struct input_event evsyn = {.type = EV_SYN, .code = SYN_REPORT, .value = 0};
-  struct input_event event = {.type = EV_KEY, .code = 1, .value = 0};
   unsigned int repeat = sizeof(key_names)/sizeof(key_names[0]);
-  fwrite(&event, sizeof(struct input_event), 1, stdout);
-  //fflush(stdout);
-  while (++(event.code) < repeat) {
-    write_event(evsyn);
-    //fflush(stdout);
-    usleep(WRITE_DELAY);
-    fwrite(&event, sizeof(struct input_event), 1, stdout);
-    //fflush(stdout);
-  }
+  struct input_event event = {.type = EV_KEY, .code = 1, .value = 0};
+  // Reset keyboard status
+  // fwrite(&event, sizeof(struct input_event), 1, stdout);
+  // //fflush(stdout);
+  // while (++(event.code) < repeat) {
+  //   write_event(evsyn);
+  //   //fflush(stdout);
+  //   usleep(WRITE_DELAY);
+  //   fwrite(&event, sizeof(struct input_event), 1, stdout);
+  //   //fflush(stdout);
+  // }
   repeat = 0;
   while (fread(&event, sizeof(event), 1, stdin) == 1) {
     if (event.type == EV_MSC && event.code == MSC_SCAN)
