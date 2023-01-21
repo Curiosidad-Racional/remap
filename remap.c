@@ -11,6 +11,8 @@
 #define WRITE_DELAY  20000
 #define REPEAT_DELAY 20000
 
+#include <X11/XKBlib.h> // XkbGetIndicatorState
+
 bool verbose = false;
 enum group_cls_e {
     WC_VOID, WC_EMACS, WC_TERM, WC_QUTEBROWSER, WC_OTHERS
@@ -63,7 +65,9 @@ enum group_cls_e check_window_classname() {
   } else if (strcmp(wm_class, "qutebrowser") == 0) {
     return WC_QUTEBROWSER;
   } else if (strcmp(wm_class, "urxvt") == 0 ||
-             strcmp(wm_class, "st-256color") == 0) {
+             strcmp(wm_class, "xterm") == 0 ||
+             strcmp(wm_class, "st-256color") == 0 ||
+             strcmp(wm_class, "kitty") == 0) {
     return WC_TERM;
   } else {
     return WC_OTHERS;
@@ -762,7 +766,9 @@ int main(int argc, char *argv[]) {
   __u16 digit;
   __u16 right_alt = KEY_RIGHTALT;
   __u16 left_right_ctrl = KEY_LEFTCTRL;
-  while ((opt = getopt(argc, argv, "sv")) != EOF)
+  char *script_caps = NULL;
+  char *script_nocaps = NULL;
+  while ((opt = getopt(argc, argv, "svc:C:")) != EOF)
     switch (opt) {
     case 's':
       right_alt = KEY_LEFTCTRL;
@@ -770,6 +776,12 @@ int main(int argc, char *argv[]) {
       break;
     case 'v':
       verbose = true;
+      break;
+    case 'C':
+      script_caps = optarg;
+      break;
+    case 'c':
+      script_nocaps = optarg;
       break;
     }
 
@@ -784,6 +796,10 @@ int main(int argc, char *argv[]) {
   char text[256];
   bool skip_remap = false;
   bool select_mode = false;
+  Display *display;
+  char *env_display = getenv("DISPLAY");
+  unsigned state;
+
   const struct input_event evsyn = {.type = EV_SYN, .code = SYN_REPORT, .value = 0};
   unsigned int repeat = sizeof(key_names)/sizeof(key_names[0]);
   struct input_event event = {.type = EV_KEY, .code = 1, .value = 0};
@@ -839,6 +855,23 @@ int main(int argc, char *argv[]) {
       }
       if (skip_remap) {
         break;
+      }
+      if (check_key1(KEY_ESC)) {
+        display = XOpenDisplay(env_display);
+        if (display) {
+          if (XkbGetIndicatorState (display, XkbUseCoreKbd, &state) == Success) {
+            if (state & 1) {
+              if (script_nocaps) system(script_nocaps);
+              fake_events[0].code = KEY_CAPSLOCK;
+              fake_events[0].value = 1;
+              fake_events[1].code = KEY_CAPSLOCK;
+              fake_events[1].value = 0;
+              write_event(fake_events[0]);
+              write_event(fake_events[1]);
+            }
+          }
+          XCloseDisplay(display);
+        }
       }
       switch (group_key) {
       case GK_NULL:
@@ -1575,6 +1608,20 @@ int main(int argc, char *argv[]) {
         write_event(evsyn);
         usleep(WRITE_DELAY);
         write_event(fake_events[i]);
+      }
+    }
+    if (event.code == KEY_CAPSLOCK && event.value == 1 &&
+            (script_nocaps || script_caps)) {
+      display = XOpenDisplay(env_display);
+      if (display) {
+        if (XkbGetIndicatorState (display, XkbUseCoreKbd, &state) == Success) {
+          if (state & 1) {
+            if (script_nocaps) system(script_nocaps);
+          } else {
+            if (script_caps) system(script_caps);
+          }
+        }
+        XCloseDisplay(display);
       }
     }
   }
