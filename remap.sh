@@ -5,10 +5,16 @@ then
     cd "$(dirname "$SCRIPT")"
     pkill -x -9 intercept
 
-    sleep 1
     DEV="$1"
     shift
-    (intercept -g "$DEV" | ./remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" | uinput -d "$DEV") &
+    (while :
+    do
+        sleep 1
+        yad --button=Ok --text-width=13 --text='Started remap'
+        intercept -g "$DEV" | ./remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" | uinput -d "$DEV"
+        yad --button=Yes --button=No --text='Relaunch remap?' || break
+    done
+    yad --button=Ok --text-width=13 --text='Stopped remap') &
 else
     USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices|grep -B 1 -E '^P: Phys=u'|grep '^N: Name='|grep -v 'DaKai 2.4G RX'|cut -d'"' -f2|tr '\n' '!')"
     OTHKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices|grep -B 1 -E '^P: Phys=[^u]'|grep '^N: Name='|cut -d'"' -f2|head -c -1|tr '\n' '!')"
@@ -32,10 +38,8 @@ else
         yad --button=Ok --text='<span foreground="red">Empty password</span>'
         return
     fi
-    if echo "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
+    if ! echo "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
     then
-        yad --button=Ok --text='Remap ready'
-    else
         yad --button=Ok --text='<span foreground="red">Remap failed</span>'
     fi
 fi
