@@ -15,13 +15,13 @@
 
 bool verbose = false;
 enum group_cls_e {
-    WC_VOID, WC_EMACS, WC_TERM, WC_QUTEBROWSER, WC_OTHERS
+  WC_VOID, WC_EMACS, WC_TERM, WC_QUTEBROWSER, WC_OTHERS
 };
 
 enum group_key_e {
-    GK_NULL,
-    GK_CTRL_X, GK_CTRL_X__R, GK_CTRL_X__T,
-    GK_CTRL_C,
+  GK_NULL,
+  GK_CTRL_X, GK_CTRL_X__R, GK_CTRL_X__T,
+  GK_CTRL_C,
 } group_key = GK_NULL;
 
 
@@ -39,23 +39,23 @@ void store_focused_window() {
 bool temp_remap = false;
 enum group_cls_e check_window_classname() {
   if (temp_remap)
-      return WC_OTHERS;
+    return WC_OTHERS;
   xcb_grab_server(g_conn);
   store_focused_window();
   xcb_get_property_reply_t *reply = xcb_get_property_reply(
-      g_conn,
-      xcb_get_property(
-          g_conn, false, g_focused_window,
-          XCB_ATOM_WM_CLASS, XCB_GET_PROPERTY_TYPE_ANY,
-          0, 32), NULL);
+    g_conn,
+    xcb_get_property(
+      g_conn, false, g_focused_window,
+      XCB_ATOM_WM_CLASS, XCB_GET_PROPERTY_TYPE_ANY,
+      0, 32), NULL);
   xcb_ungrab_server(g_conn);
   xcb_flush(g_conn);
 
   if (reply == NULL)
-      return WC_VOID;
+    return WC_VOID;
   int len = xcb_get_property_value_length(reply);
   if (len <= 0)
-      return WC_VOID;
+    return WC_VOID;
 
   char* wm_class = (char*)xcb_get_property_value(reply);
   free(reply);
@@ -77,73 +77,73 @@ enum group_cls_e check_window_classname() {
 
 void check_request(xcb_connection_t *dpy, xcb_void_cookie_t cookie, char *msg)
 {
-    xcb_generic_error_t *err = xcb_request_check(dpy, cookie);
-    if (err != NULL) {
-        fprintf(stderr, "%s: error code: %u.\n", msg, err->error_code);
-        xcb_disconnect(dpy);
-        exit(-1);
-    }
+  xcb_generic_error_t *err = xcb_request_check(dpy, cookie);
+  if (err != NULL) {
+    fprintf(stderr, "%s: error code: %u.\n", msg, err->error_code);
+    xcb_disconnect(dpy);
+    exit(-1);
+  }
 }
 
 xcb_gcontext_t get_font_gc(
-    xcb_connection_t *dpy, xcb_window_t win, const char *font_name,
-    uint32_t fg_color, uint32_t bg_color)
+  xcb_connection_t *dpy, xcb_window_t win, const char *font_name,
+  uint32_t fg_color, uint32_t bg_color)
 {
-    xcb_void_cookie_t ck;
-    char warn[] = "Can't open font";
-    xcb_font_t font = xcb_generate_id(dpy);
-    ck = xcb_open_font_checked(dpy, font, strlen(font_name), font_name);
-    check_request(dpy, ck, warn);
-    xcb_gcontext_t gc = xcb_generate_id(dpy);
-    uint32_t mask = XCB_GC_FOREGROUND | XCB_GC_BACKGROUND | XCB_GC_FONT;
-    uint32_t values[] = {fg_color, bg_color, font};
-    xcb_create_gc(dpy, gc, win, mask, values);
-    xcb_close_font(dpy, font);
-    return gc;
+  xcb_void_cookie_t ck;
+  char warn[] = "Can't open font";
+  xcb_font_t font = xcb_generate_id(dpy);
+  ck = xcb_open_font_checked(dpy, font, strlen(font_name), font_name);
+  check_request(dpy, ck, warn);
+  xcb_gcontext_t gc = xcb_generate_id(dpy);
+  uint32_t mask = XCB_GC_FOREGROUND | XCB_GC_BACKGROUND | XCB_GC_FONT;
+  uint32_t values[] = {fg_color, bg_color, font};
+  xcb_create_gc(dpy, gc, win, mask, values);
+  xcb_close_font(dpy, font);
+  return gc;
 }
 
 void show_text_window(char *text, uint32_t fg_color,
                       uint32_t bg_color, xcb_window_t focused_window) {
-    if (g_text_window) {
-      xcb_destroy_window(g_conn, g_text_window);
-      xcb_flush(g_conn);
-    }
-
-    if (text == NULL) return;
-
-    xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(g_conn)).data;
-    if (screen == NULL) {
-        fprintf(stderr, "Can't get current screen.\n");
-        xcb_disconnect(g_conn);
-        exit(EXIT_FAILURE);
-    }
-
-    g_text_window = xcb_generate_id(g_conn);
-        uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-    uint32_t values[] = {bg_color, XCB_EVENT_MASK_EXPOSURE};
-    xcb_create_window(
-        g_conn,
-        XCB_COPY_FROM_PARENT,
-        g_text_window,
-        focused_window? focused_window : screen->root,
-        0, 0,
-        strlen(text) * 9 + 6, 18,
-        0,
-        XCB_WINDOW_CLASS_COPY_FROM_PARENT, //XCB_WINDOW_CLASS_INPUT_OUTPUT,
-        XCB_COPY_FROM_PARENT, //window.scr->root_visual,
-        mask,
-        values);
-    xcb_map_window(g_conn, g_text_window);
+  if (g_text_window) {
+    xcb_destroy_window(g_conn, g_text_window);
     xcb_flush(g_conn);
+  }
 
-    char warn[] = "Can't draw text";
-    xcb_drawable_t gc = get_font_gc(
-        g_conn, g_text_window, "-*-fixed-medium-*-*-*-18-*-*-*-*-*-*-*",
-        fg_color, bg_color);
-    xcb_void_cookie_t ck = xcb_image_text_8_checked(
-        g_conn, strlen(text), g_text_window, gc, 4, 14, text);
-    check_request(g_conn, ck, warn);
-    xcb_free_gc(g_conn, gc);
+  if (text == NULL) return;
+
+  xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(g_conn)).data;
+  if (screen == NULL) {
+    fprintf(stderr, "Can't get current screen.\n");
+    xcb_disconnect(g_conn);
+    exit(EXIT_FAILURE);
+  }
+
+  g_text_window = xcb_generate_id(g_conn);
+  uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+  uint32_t values[] = {bg_color, XCB_EVENT_MASK_EXPOSURE};
+  xcb_create_window(
+    g_conn,
+    XCB_COPY_FROM_PARENT,
+    g_text_window,
+    focused_window? focused_window : screen->root,
+    0, 0,
+    strlen(text) * 9 + 6, 18,
+    0,
+    XCB_WINDOW_CLASS_COPY_FROM_PARENT, //XCB_WINDOW_CLASS_INPUT_OUTPUT,
+    XCB_COPY_FROM_PARENT, //window.scr->root_visual,
+    mask,
+    values);
+  xcb_map_window(g_conn, g_text_window);
+  xcb_flush(g_conn);
+
+  char warn[] = "Can't draw text";
+  xcb_drawable_t gc = get_font_gc(
+    g_conn, g_text_window, "-*-fixed-medium-*-*-*-18-*-*-*-*-*-*-*",
+    fg_color, bg_color);
+  xcb_void_cookie_t ck = xcb_image_text_8_checked(
+    g_conn, strlen(text), g_text_window, gc, 4, 14, text);
+  check_request(g_conn, ck, warn);
+  xcb_free_gc(g_conn, gc);
 }
 
 
@@ -155,14 +155,14 @@ void delete_focused_window() {
   }
 
   xcb_intern_atom_cookie_t protocol_cookie =
-      xcb_intern_atom(g_conn, 1, 12, "WM_PROTOCOLS");
+    xcb_intern_atom(g_conn, 1, 12, "WM_PROTOCOLS");
   xcb_intern_atom_reply_t* protocol_reply =
-      xcb_intern_atom_reply(g_conn, protocol_cookie, 0);
+    xcb_intern_atom_reply(g_conn, protocol_cookie, 0);
   xcb_intern_atom_cookie_t delete_cookie =
-      xcb_intern_atom(g_conn, 0, 16, "WM_DELETE_WINDOW");
+    xcb_intern_atom(g_conn, 0, 16, "WM_DELETE_WINDOW");
   xcb_intern_atom_reply_t* delete_reply =
-      xcb_intern_atom_reply(g_conn, delete_cookie, 0);
-  
+    xcb_intern_atom_reply(g_conn, delete_cookie, 0);
+
   xcb_client_message_event_t e = {
     .response_type = XCB_CLIENT_MESSAGE,
     .format = 32,
@@ -861,7 +861,14 @@ int main(int argc, char *argv[]) {
         if (display) {
           if (XkbGetIndicatorState (display, XkbUseCoreKbd, &state) == Success) {
             if (state & 1) {
-              if (script_nocaps) system(script_nocaps);
+              if (script_nocaps) {
+                pid_t pid = fork();
+                if (pid < 0) exit(1);
+                if (pid) {
+                  system(script_nocaps);
+                  exit(0);
+                }
+              }
               fake_events[0].code = KEY_CAPSLOCK;
               fake_events[0].value = 1;
               fake_events[1].code = KEY_CAPSLOCK;
@@ -1616,9 +1623,23 @@ int main(int argc, char *argv[]) {
       if (display) {
         if (XkbGetIndicatorState (display, XkbUseCoreKbd, &state) == Success) {
           if (state & 1) {
-            if (script_nocaps) system(script_nocaps);
+            if (script_nocaps) {
+              pid_t pid = fork();
+              if (pid < 0) exit(1);
+              if (pid) {
+                system(script_nocaps);
+                exit(0);
+              }
+            }
           } else {
-            if (script_caps) system(script_caps);
+            if (script_caps) {
+              pid_t pid = fork();
+              if (pid < 0) exit(1);
+              if (pid) {
+                system(script_caps);
+                exit(0);
+              }
+            }
           }
         }
         XCloseDisplay(display);
