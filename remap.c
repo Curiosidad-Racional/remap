@@ -59,14 +59,16 @@ enum group_cls_e check_window_classname() {
 
   char* wm_class = (char*)xcb_get_property_value(reply);
   free(reply);
-  if (strcmp(wm_class, "Alacritty") == 0 ||
-      strcmp(wm_class, "emacs") == 0) {
+  if (strcmp(wm_class, "Scratchpad") == 0 ||
+      strcmp(wm_class, "st-256color") == 0 ||
+      strcmp(wm_class, "emacs") == 0 ||
+      strcmp(wm_class, "Alacritty") == 0 ||
+      strcmp(wm_class, "org.wezfurlong.wezterm") == 0) {
     return WC_EMACS;
   } else if (strcmp(wm_class, "qutebrowser") == 0) {
     return WC_QUTEBROWSER;
-  } else if (strcmp(wm_class, "urxvt") == 0 ||
-             strcmp(wm_class, "xterm") == 0 ||
-             strcmp(wm_class, "st-256color") == 0 ||
+  } else if (strcmp(wm_class, "xterm") == 0 ||
+             strcmp(wm_class, "urxvt") == 0 ||
              strcmp(wm_class, "kitty") == 0) {
     return WC_TERM;
   } else {
@@ -1005,10 +1007,10 @@ int main(int argc, char *argv[]) {
             else
               mod0_key0_remap(KEY_LEFTCTRL, KEY_V, KEY_PAGEDOWN);
             break;
-          case WC_TERM:
-            mod0_key0_mod1_remap(KEY_LEFTCTRL, KEY_V, KEY_LEFTSHIFT,
-                                 KEY_PAGEDOWN);
-            break;
+          // case WC_TERM:
+          //   mod0_key0_mod1_remap(KEY_LEFTCTRL, KEY_V, KEY_LEFTSHIFT,
+          //                        KEY_PAGEDOWN);
+          //   break;
           }
         }
         // ALT MOVEMENT
@@ -1026,10 +1028,10 @@ int main(int argc, char *argv[]) {
             else
               mod0_key0_remap(KEY_LEFTALT, KEY_V, KEY_PAGEUP);
             break;
-          case WC_TERM:
-            mod0_key0_mod1_remap(KEY_LEFTALT, KEY_V, KEY_LEFTSHIFT,
-                                 KEY_PAGEUP);
-            break;
+          // case WC_TERM:
+          //   mod0_key0_mod1_remap(KEY_LEFTALT, KEY_V, KEY_LEFTSHIFT,
+          //                        KEY_PAGEUP);
+          //   break;
           }
         } else if (check_key2(KEY_LEFTALT, KEY_N)) {
           switch (check_window_classname()) {
@@ -1143,6 +1145,18 @@ int main(int argc, char *argv[]) {
               select_mode = false;
             break;
           }
+        } else if (check_key3(KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_Y)) {
+          switch (check_window_classname()) {
+          case WC_TERM:
+            mod0_key0_mod1_remap(KEY_LEFTCTRL, KEY_Y, KEY_LEFTSHIFT, KEY_INSERT);
+            break;
+          case WC_QUTEBROWSER:
+          case WC_OTHERS:
+            mod1_key0_mod1_remap(KEY_LEFTCTRL, KEY_Y, KEY_LEFTSHIFT, KEY_V);
+            if (select_mode)
+              select_mode = false;
+            break;
+          }
         } else if (check_key2(KEY_LEFTCTRL, KEY_W)) {
           switch (check_window_classname()) {
           case WC_QUTEBROWSER:
@@ -1231,6 +1245,19 @@ int main(int argc, char *argv[]) {
           case WC_OTHERS:
             mod0_key0_mod1_remap_remap(KEY_LEFTCTRL, KEY_K, KEY_LEFTSHIFT,
                                        KEY_END, KEY_DELETE);
+            if (select_mode)
+              select_mode = false;
+            break;
+          }
+        } else if (check_key2(KEY_LEFTCTRL, KEY_U)) {
+          switch (check_window_classname()) {
+          case WC_QUTEBROWSER:
+            if (select_mode)
+              select_mode = false;
+            break;
+          case WC_OTHERS:
+            mod0_key0_mod1_remap_remap(KEY_LEFTCTRL, KEY_U, KEY_LEFTSHIFT,
+                                       KEY_HOME, KEY_DELETE);
             if (select_mode)
               select_mode = false;
             break;
@@ -1487,10 +1514,16 @@ int main(int argc, char *argv[]) {
         } else if (check_key2(KEY_LEFTCTRL, KEY_F)) {
           group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_K)) {
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_N)) {
           group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key2(KEY_LEFTCTRL, KEY_P)) {
+          group_key = GK_NULL;
+          show_text_window(NULL, 0, 0, g_focused_window);
+        } else if (check_key2(KEY_LEFTCTRL, KEY_U)) {
           group_key = GK_NULL;
           show_text_window(NULL, 0, 0, g_focused_window);
         } else if (check_key1_digit(KEY_LEFTCTRL)) {
