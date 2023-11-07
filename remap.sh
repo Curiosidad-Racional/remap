@@ -1,5 +1,10 @@
 #!/bin/sh
 SCRIPT="$(realpath "$0")"
+get_device() {
+    grep -A 4 "$1" /proc/bus/input/devices \
+        |sed -nr 's/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p' \
+        |head -1
+}
 if [ -n "$SUDO_USER" ]
 then
     # exec >/tmp/remap.log 2>&1
@@ -11,7 +16,7 @@ then
     (while :
     do
         COUNT=0
-        DEV="/dev/input/$(grep -A 4 "$DEVICE" /proc/bus/input/devices|sed -nr 's/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p'|head -1)"
+        DEV="/dev/input/$(get_device "$DEVICE")"
         while [ ! -c "$DEV" ]
         do
             sleep 3
@@ -23,11 +28,11 @@ then
                     exit
                 fi
             fi
-            DEV="/dev/input/$(grep -A 4 "$DEVICE" /proc/bus/input/devices|sed -nr 's/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p'|head -1)"
+            DEV="/dev/input/$(get_device "$DEVICE")"
         done
         if pgrep -f '^\./remap -C '
         then
-            dunstify -a remap -u normal -t 2000 "remap already running"
+            dunstify -a remap -u normal -t 5000 "remap already running"
             exit
         fi
         case $(dunstify -a remap -u critical -t 2000 -A 'default,Reply' 'Launching remap') in
@@ -37,37 +42,48 @@ then
         # sleep 1
         # yad --name='yad:*' --button=Ok --text-width=13 --text='Started remap' &
         dunstify -a remap -u normal -t 2000 "Started remap"
-        intercept -g "$DEV" | ./remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" | uinput -d "$DEV"
+        intercept -g "$DEV" \
+            | ./remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" \
+            | uinput -d "$DEV"
         # yad --name='yad:*' --button=Yes --button=No --text='Relaunch remap?' || break
     done
     # yad --name='yad:*' --button=Ok --text-width=13 --text='Stopped remap'
     dunstify -a remap -u normal -t 2000 "Stopped remap"
     ) &
 else
-    USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices|grep -B 1 -E '^P: Phys=u'|grep '^N: Name='|grep -v 'DaKai 2.4G RX'|cut -d'"' -f2|tr '\n' '!')"
-    OTHKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices|grep -B 1 -E '^P: Phys=[^u]'|grep '^N: Name='|cut -d'"' -f2|head -c -1|tr '\n' '!')"
-    INPUTS="$(yad --separator='"' --focus-field=3 --form --field=device:CB --field=args:CB --field=sudo:H -- "$USBKBD$OTHKBD" '-s!-s -v')"
-    if [ "$?" != 0 ]
-    then
-        exit
-    fi
-    DEVICE="$(echo "$INPUTS"|cut -d'"' -f1)"
-    PARAMS="$(echo "$INPUTS"|cut -d'"' -f2)"
-    PASSWD="$(echo "$INPUTS"|cut -d'"' -f3)"
+    USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
+        |grep -B 1 -E '^P: Phys=u'|grep '^N: Name='|grep -v 'DaKai 2.4G RX' \
+        |cut -d'"' -f2|tr '\n' '!')"
+    OTHKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
+        |grep -B 1 -E '^P: Phys=[^u]'|grep '^N: Name=' \
+        |cut -d'"' -f2|head -c -1|tr '\n' '!')"
+    while :
+    do
+        INPUTS="$(yad --separator='|' --focus-field=3 --form --field=device:CB --field=args:CB --field=sudo:H -- "$USBKBD$OTHKBD" '-s!-s -v')"
+        if [ "$?" != 0 ]
+        then
+            exit
+        fi
+        IFS='|' read -r DEVICE PARAMS PASSWD <<-EOF
+		$INPUTS
+		EOF
 
-    DEV="/dev/input/$(grep -A 4 "$DEVICE" /proc/bus/input/devices|sed -nr 's/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p'|head -1)"
-    if [ ! -c "$DEV" ]
-    then
-        yad --button=Ok --text="<span foreground=\"red\">Invalid device:</span> $DEV"
-        exit
-    fi
-    if [ -z "$PASSWD" ]
-    then
-        yad --button=Ok --text='<span foreground="red">Empty password</span>'
-        exit
-    fi
-    if ! echo "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
-    then
-        yad --button=Ok --text='<span foreground="red">Remap failed</span>'
-    fi
+        DEV="/dev/input/$(get_device "$DEVICE")"
+        if [ ! -c "$DEV" ]
+        then
+            yad --button=Ok --text="<span foreground=\"red\">Invalid device:</span> $DEV"
+            exit 2
+        fi
+        if [ -z "$PASSWD" ]
+        then
+            yad --button=Ok --text='<span foreground="red">Empty password</span>'
+            exit 2
+        fi
+        if ! echo "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
+        then
+            yad --button=Ok --text='<span foreground="red">Remap failed</span>'
+        else
+            break
+        fi
+    done
 fi

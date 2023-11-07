@@ -1322,7 +1322,7 @@ int main(int argc, char *argv[]) {
             } else {
               text[0] = '\0';
             }
-            strcat(text, "C+C -> {T,C+A,C+B,C+C,C+D,C+E,C+F,C+N,C+P,C+0-9}");
+            strcat(text, "C+C -> {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}");
             show_text_window(text, 0xffcccccc, 0xff4530ff, g_focused_window);
             continue;
           }
