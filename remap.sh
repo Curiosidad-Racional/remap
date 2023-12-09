@@ -23,14 +23,14 @@ then
             if [ $((COUNT=COUNT+1)) -gt 10 ]
             then
                 COUNT=0
-                if pgrep -f '^\./remap -C '
+                if pgrep -f '^\./target/release/remap -C '
                 then
                     exit
                 fi
             fi
             DEV="/dev/input/$(get_device "$DEVICE")"
         done
-        if pgrep -f '^\./remap -C '
+        if pgrep -f '^\./target/release/remap -C '
         then
             dunstify -a remap -u critical -t 5000 "remap already running"
             exit
@@ -43,7 +43,7 @@ then
         # yad --name='yad:*' --button=Ok --text-width=13 --text='Started remap' &
         dunstify -a remap -u normal -t 2000 "Started remap"
         intercept -g "$DEV" \
-            | ./remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" \
+            | ./target/release/remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" \
             | uinput -d "$DEV"
         # yad --name='yad:*' --button=Yes --button=No --text='Relaunch remap?' || break
     done
