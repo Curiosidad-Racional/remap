@@ -19,7 +19,7 @@ then
         DEV="/dev/input/$(get_device "$DEVICE")"
         while [ ! -c "$DEV" ]
         do
-            sleep 3
+            sleep 2
             if [ $((COUNT=COUNT+1)) -gt 10 ]
             then
                 COUNT=0
@@ -32,10 +32,10 @@ then
         done
         if pgrep -f '^\./remap -C '
         then
-            dunstify -a remap -u normal -t 5000 "remap already running"
+            dunstify -a remap -u critical -t 5000 "remap already running"
             exit
         fi
-        case $(dunstify -a remap -u critical -t 2000 -A 'default,Reply' 'Launching remap') in
+        case $(dunstify -a remap -u critical -t 1000 -A 'default,Reply' 'Launching remap') in
         (1) ;;
         (*) break;;
         esac
@@ -48,7 +48,7 @@ then
         # yad --name='yad:*' --button=Yes --button=No --text='Relaunch remap?' || break
     done
     # yad --name='yad:*' --button=Ok --text-width=13 --text='Stopped remap'
-    dunstify -a remap -u normal -t 2000 "Stopped remap"
+    dunstify -a remap -u critical -t 2000 "Stopped remap"
     ) &
 else
     USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
@@ -79,7 +79,7 @@ else
             yad --button=Ok --text='<span foreground="red">Empty password</span>'
             exit 2
         fi
-        if ! echo "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
+        if ! printf '%s' "$PASSWD" | sudo -S "$SCRIPT" "$DEVICE" $PARAMS
         then
             yad --button=Ok --text='<span foreground="red">Remap failed</span>'
         else

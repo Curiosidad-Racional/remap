@@ -12,3 +12,6 @@ box: box.c
 
 capslock_xlib: capslock_xlib.c
 	gcc capslock_xlib.c -o capslock_xlib -lX11
+
+stdout_event: stdout_event.c
+	gcc -O3 stdout_event.c -o stdout_event
