@@ -364,32 +364,33 @@ impl WMConn {
     let cookie = self.conn.send_request(&xcb::x::GetInputFocus {});
     let reply = self.conn.wait_for_reply(cookie);
 
+    let (parent, visual) = match reply {
+      Ok(reply) => (reply.focus(), xcb::x::COPY_FROM_PARENT),
+      Err(_) => {
+        let screen = self
+          .conn
+          .get_setup()
+          .roots()
+          .nth(self.screen_num as usize)
+          .unwrap();
+        (screen.root(), screen.root_visual())
+      }
+    };
     let child: xcb::x::Window = self.conn.generate_id();
     self.conn.send_request(&xcb::x::CreateWindow {
       depth: xcb::x::COPY_FROM_PARENT as u8,
       wid: child,
-      parent: match reply {
-        Ok(reply) => reply.focus(),
-        Err(_) => {
-          let screen = self
-            .conn
-            .get_setup()
-            .roots()
-            .nth(self.screen_num as usize)
-            .unwrap();
-          screen.root()
-        }
-      },
+      parent,
       x,
       y,
       width: text.len() as u16 * 9 + 6,
       height: 18,
       border_width: 0,
       class: xcb::x::WindowClass::CopyFromParent,
-      visual: xcb::x::COPY_FROM_PARENT,
+      visual,
       value_list: &[
         xcb::x::Cw::BackPixel(bg),
-        xcb::x::Cw::EventMask(xcb::x::EventMask::EXPOSURE),
+        // xcb::x::Cw::EventMask(xcb::x::EventMask::EXPOSURE),
       ],
     });
     self.conn.send_request(&xcb::x::MapWindow { window: child });
@@ -397,7 +398,8 @@ impl WMConn {
     let font: xcb::x::Font = self.conn.generate_id();
     self.conn.send_request(&xcb::x::OpenFont {
       fid: font,
-      name: b"-*-fixed-bold-*-*-*-18-*-*-*-*-*-*-*",
+      // xfontsel: command to preview font
+      name: b"-*-fixed-bold-*-*-*-18-*-*-*-*-*-iso8859-*",
     });
 
     let drawable = xcb::x::Drawable::Window(child);
@@ -411,8 +413,6 @@ impl WMConn {
         xcb::x::Gc::Font(font),
       ],
     });
-    self.conn.flush().unwrap();
-    // let _ = self.conn.wait_for_event();
 
     self.conn.send_request(&xcb::x::ImageText8 {
       drawable,
@@ -791,16 +791,56 @@ fn main() {
         vec![sys::KEY_LEFTCTRL],
         vec![[ACTION_REMAP, 5]],
       ),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_1], vec![], vec![[ACTION_PREFIX, 1]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_2], vec![], vec![[ACTION_PREFIX, 2]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_3], vec![], vec![[ACTION_PREFIX, 3]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_4], vec![], vec![[ACTION_PREFIX, 4]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_5], vec![], vec![[ACTION_PREFIX, 5]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_6], vec![], vec![[ACTION_PREFIX, 6]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_7], vec![], vec![[ACTION_PREFIX, 7]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_8], vec![], vec![[ACTION_PREFIX, 8]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_9], vec![], vec![[ACTION_PREFIX, 9]]),
-      (vec![sys::KEY_LEFTCTRL, sys::KEY_0], vec![], vec![[ACTION_PREFIX, 0]]),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_1],
+        vec![],
+        vec![[ACTION_PREFIX, 1]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_2],
+        vec![],
+        vec![[ACTION_PREFIX, 2]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_3],
+        vec![],
+        vec![[ACTION_PREFIX, 3]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_4],
+        vec![],
+        vec![[ACTION_PREFIX, 4]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_5],
+        vec![],
+        vec![[ACTION_PREFIX, 5]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_6],
+        vec![],
+        vec![[ACTION_PREFIX, 6]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_7],
+        vec![],
+        vec![[ACTION_PREFIX, 7]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_8],
+        vec![],
+        vec![[ACTION_PREFIX, 8]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_9],
+        vec![],
+        vec![[ACTION_PREFIX, 9]],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_0],
+        vec![],
+        vec![[ACTION_PREFIX, 0]],
+      ),
     ],
     // 3 - Select Mode
     vec![
@@ -1436,7 +1476,7 @@ fn main() {
                     match fake_key[1] {
                       ACTION_MACRO_START => {
                         output.start_recording();
-                        macro_title = "RECORDING";
+                        macro_title = "REC·";
                         wmconn.show_text(
                           &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
                         );
@@ -1461,9 +1501,9 @@ fn main() {
                   ACTION_REMAP => {
                     remap_index_next = fake_key[1] as usize;
                     remap_title = match remap_index_next {
-                      3 => ">C+SPC",
-                      4 => ">C+X > {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}",
-                      5 => ">C+C > {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}",
+                      3 => "C+SPC",
+                      4 => "C+X > {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}",
+                      5 => "C+C > {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}",
                       _ => "",
                     };
                     if fake_keys.len() == 1 {
