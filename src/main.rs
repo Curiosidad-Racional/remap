@@ -317,11 +317,12 @@ impl WMConn {
     }
   }
 
-  fn get_focused_window(&self) -> xcb::Result<xcb::x::Window> {
+  fn get_focused_window(&mut self) -> xcb::Result<xcb::x::Window> {
     static ELAPSED: Duration = Duration::from_millis(400);
     if let Some(window) = self.focused {
       if let Some(last) = self.last_instant {
         if last.elapsed() < ELAPSED {
+          self.last_instant = Some(std::time::Instant::now());
           return Ok(window);
         }
       }
@@ -329,10 +330,12 @@ impl WMConn {
     let cookie = self.conn.send_request(&xcb::x::GetInputFocus {});
     let reply = self.conn.wait_for_reply(cookie)?;
     let focus = reply.focus();
+    self.last_instant = Some(std::time::Instant::now());
+    self.focused = Some(focus);
     Ok(focus)
   }
 
-  fn get_group_class(&self) -> GroupClass {
+  fn get_group_class(&mut self) -> GroupClass {
     if let Ok(window) = self.get_focused_window() {
       let cookie = self.conn.send_request(&xcb::x::GetProperty {
         delete: false,
@@ -358,12 +361,15 @@ impl WMConn {
   }
 
   fn create_text_window(&self, text: &[u8], x: i16, y: i16, fg: u32, bg: u32) -> xcb::x::Window {
+    let cookie = self.conn.send_request(&xcb::x::GetInputFocus {});
+    let reply = self.conn.wait_for_reply(cookie);
+
     let child: xcb::x::Window = self.conn.generate_id();
     self.conn.send_request(&xcb::x::CreateWindow {
       depth: xcb::x::COPY_FROM_PARENT as u8,
       wid: child,
-      parent: match self.get_focused_window() {
-        Ok(window) => window,
+      parent: match reply {
+        Ok(reply) => reply.focus(),
         Err(_) => {
           let screen = self
             .conn
