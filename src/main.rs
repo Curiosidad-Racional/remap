@@ -4,6 +4,13 @@ use std::io::{Read, Write};
 use std::time::Duration;
 
 const REMAP_INDEX_OTHERS: usize = 2;
+const ACTION_REMAP: i32 = 0;
+const ACTION_MACRO: i32 = -1;
+const ACTION_PREFIX: i32 = -2;
+const ACTION_MACRO_START: i32 = 0;
+const ACTION_MACRO_STOP: i32 = 1;
+const ACTION_MACRO_EXECUTE: i32 = 2;
+
 // [ DEBUG
 // const KEY_NAMES: [&str; 249] = [
 //   "KEY_RESERVED",
@@ -258,6 +265,28 @@ const REMAP_INDEX_OTHERS: usize = 2;
 // ];
 // ] DEBUG
 
+fn is_modifier(code: u16) -> bool {
+  match i32::try_from(code) {
+    Ok(code) => {
+      matches!(
+        code,
+        sys::KEY_LEFTCTRL
+          | sys::KEY_RIGHTCTRL
+          | sys::KEY_LEFTALT
+          | sys::KEY_RIGHTALT
+          | sys::KEY_LEFTSHIFT
+          | sys::KEY_RIGHTSHIFT
+          | sys::KEY_LEFTMETA
+          | sys::KEY_RIGHTMETA
+          | sys::KEY_CAPSLOCK
+          | sys::KEY_NUMLOCK
+          | sys::KEY_SCROLLLOCK
+      )
+    }
+    Err(_) => false,
+  }
+}
+
 #[derive(Debug)]
 enum GroupClass {
   Void,
@@ -390,7 +419,7 @@ impl WMConn {
     child
   }
 
-  fn show_text(&mut self, text: Option<&str>) {
+  fn show_text(&mut self, text: &str) {
     if let Some(child) = self.child {
       self
         .conn
@@ -398,7 +427,7 @@ impl WMConn {
       self.conn.flush().unwrap();
       self.child = None;
     }
-    if let Some(text) = text {
+    if !text.is_empty() {
       self.child = Some(self.create_text_window(text.as_bytes(), 0, 0, 0xffffff, 0x0818A8));
     }
   }
@@ -423,23 +452,56 @@ fn read_input_event(stdin: &mut std::io::Stdin) -> std::io::Result<input_linux::
   Ok(input_event)
 }
 
-fn write_input_event(
-  stdout: &mut std::io::Stdout,
-  event: input_linux::InputEvent,
-) -> std::io::Result<()> {
-  // [ DEBUG
-  // let mut stderr = std::io::stderr();
-  // stderr.write_all(
-  //   format!(
-  //     "{:?}\t{:?}\t{}\t{}\n",
-  //     event.time, event.kind, KEY_NAMES[event.code as usize], event.value
-  //   )
-  //   .as_bytes(),
-  // )?;
-  // ] DEBUG
-  stdout.write_all(event.as_bytes())?;
-  stdout.flush()?;
-  Ok(())
+struct Stdoutput {
+  grab: bool,
+  events: Vec<input_linux::InputEvent>,
+  stdout: std::io::Stdout,
+}
+
+impl Stdoutput {
+  fn new() -> Self {
+    Self {
+      grab: false,
+      events: Vec::new(),
+      stdout: std::io::stdout(),
+    }
+  }
+
+  fn start_recording(&mut self) {
+    self.events.clear();
+    self.grab = true;
+  }
+
+  fn stop_recording(&mut self) {
+    self.grab = false;
+  }
+
+  fn write_events(&mut self) -> std::io::Result<()> {
+    for event in &self.events {
+      self.stdout.write_all(event.as_bytes())?;
+      self.stdout.flush()?;
+    }
+    Ok(())
+  }
+
+  fn write_event(&mut self, event: input_linux::InputEvent) -> std::io::Result<()> {
+    // [ DEBUG
+    // let mut stderr = std::io::stderr();
+    // stderr.write_all(
+    //   format!(
+    //     "{:?}\t{:?}\t{}\t{}\n",
+    //     event.time, event.kind, KEY_NAMES[event.code as usize], event.value
+    //   )
+    //   .as_bytes(),
+    // )?;
+    // ] DEBUG
+    self.stdout.write_all(event.as_bytes())?;
+    self.stdout.flush()?;
+    if self.grab {
+      self.events.push(event);
+    }
+    Ok(())
+  }
 }
 
 struct Keyboard {
@@ -485,9 +547,6 @@ impl Keyboard {
 fn main() {
   let mut keyboard = Keyboard::new();
   let mut wmconn = WMConn::new();
-
-  let mut stdin = std::io::stdin();
-  let mut stdout = std::io::stdout();
 
   let remaps = [
     // 0 - Emacs
@@ -714,35 +773,45 @@ fn main() {
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_SPACE],
         vec![],
-        vec![[0, 3]],
+        vec![[ACTION_REMAP, 3]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_X],
         vec![sys::KEY_LEFTCTRL],
-        vec![[0, 4]],
+        vec![[ACTION_REMAP, 4]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_C],
         vec![sys::KEY_LEFTCTRL],
-        vec![[0, 5]],
+        vec![[ACTION_REMAP, 5]],
       ),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_1], vec![], vec![[ACTION_PREFIX, 1]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_2], vec![], vec![[ACTION_PREFIX, 2]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_3], vec![], vec![[ACTION_PREFIX, 3]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_4], vec![], vec![[ACTION_PREFIX, 4]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_5], vec![], vec![[ACTION_PREFIX, 5]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_6], vec![], vec![[ACTION_PREFIX, 6]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_7], vec![], vec![[ACTION_PREFIX, 7]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_8], vec![], vec![[ACTION_PREFIX, 8]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_9], vec![], vec![[ACTION_PREFIX, 9]]),
+      (vec![sys::KEY_LEFTCTRL, sys::KEY_0], vec![], vec![[ACTION_PREFIX, 0]]),
     ],
     // 3 - Select Mode
     vec![
       (
         vec![sys::KEY_ESC],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_SPACE],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_G],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_DELETE],
@@ -750,7 +819,7 @@ fn main() {
         vec![
           [sys::KEY_DELETE, 1],
           [sys::KEY_DELETE, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -759,7 +828,7 @@ fn main() {
         vec![
           [sys::KEY_BACKSPACE, 1],
           [sys::KEY_BACKSPACE, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -909,7 +978,7 @@ fn main() {
         vec![
           [sys::KEY_V, 1],
           [sys::KEY_V, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -918,7 +987,7 @@ fn main() {
         vec![
           [sys::KEY_X, 1],
           [sys::KEY_X, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -929,7 +998,7 @@ fn main() {
           [sys::KEY_C, 1],
           [sys::KEY_C, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       // EDITION
@@ -939,7 +1008,7 @@ fn main() {
         vec![
           [sys::KEY_DELETE, 1],
           [sys::KEY_DELETE, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -950,7 +1019,7 @@ fn main() {
           [sys::KEY_DELETE, 1],
           [sys::KEY_DELETE, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
     ],
@@ -959,12 +1028,12 @@ fn main() {
       (
         vec![sys::KEY_ESC],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_G],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_B],
@@ -976,7 +1045,7 @@ fn main() {
           [sys::KEY_A, 0],
           [sys::KEY_LEFTSHIFT, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -989,7 +1058,7 @@ fn main() {
           [sys::KEY_T, 0],
           [sys::KEY_LEFTSHIFT, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1000,7 +1069,7 @@ fn main() {
           [sys::KEY_W, 1],
           [sys::KEY_W, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1011,7 +1080,7 @@ fn main() {
           [sys::KEY_TAB, 1],
           [sys::KEY_TAB, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1022,7 +1091,7 @@ fn main() {
           [sys::KEY_TAB, 1],
           [sys::KEY_TAB, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1033,7 +1102,7 @@ fn main() {
           [sys::KEY_T, 1],
           [sys::KEY_T, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1044,7 +1113,7 @@ fn main() {
           [sys::KEY_T, 1],
           [sys::KEY_T, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1055,7 +1124,7 @@ fn main() {
           [sys::KEY_N, 1],
           [sys::KEY_N, 0],
           [sys::KEY_LEFTCTRL, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1064,7 +1133,7 @@ fn main() {
         vec![
           [sys::KEY_S, 1],
           [sys::KEY_S, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1073,18 +1142,44 @@ fn main() {
         vec![
           [sys::KEY_O, 1],
           [sys::KEY_O, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_C],
         vec![],
         vec![
-          [sys::KEY_LEFTALT, 1],
-          [sys::KEY_F4, 1],
-          [sys::KEY_F4, 0],
-          [sys::KEY_LEFTALT, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [sys::KEY_LEFTCTRL, 1],
+          [sys::KEY_LEFTSHIFT, 1],
+          [sys::KEY_W, 1],
+          [sys::KEY_W, 0],
+          [sys::KEY_LEFTCTRL, 0],
+          [sys::KEY_LEFTSHIFT, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTSHIFT, sys::KEY_8],
+        vec![],
+        vec![
+          [ACTION_MACRO, ACTION_MACRO_START],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTSHIFT, sys::KEY_9],
+        vec![],
+        vec![
+          [ACTION_MACRO, ACTION_MACRO_STOP],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_E],
+        vec![],
+        vec![
+          [ACTION_MACRO, ACTION_MACRO_EXECUTE],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
     ],
@@ -1093,12 +1188,12 @@ fn main() {
       (
         vec![sys::KEY_ESC],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_G],
         vec![],
-        vec![[0, REMAP_INDEX_OTHERS as i32]],
+        vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
         vec![sys::KEY_T],
@@ -1108,7 +1203,7 @@ fn main() {
           [sys::KEY_F6, 0],
           [sys::KEY_F6, 1],
           [sys::KEY_F6, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1117,7 +1212,7 @@ fn main() {
         vec![
           [sys::KEY_A, 1],
           [sys::KEY_A, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1126,7 +1221,7 @@ fn main() {
         vec![
           [sys::KEY_B, 1],
           [sys::KEY_B, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1135,7 +1230,7 @@ fn main() {
         vec![
           [sys::KEY_C, 1],
           [sys::KEY_C, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1144,7 +1239,7 @@ fn main() {
         vec![
           [sys::KEY_D, 1],
           [sys::KEY_D, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1153,7 +1248,7 @@ fn main() {
         vec![
           [sys::KEY_E, 1],
           [sys::KEY_E, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1162,7 +1257,7 @@ fn main() {
         vec![
           [sys::KEY_F, 1],
           [sys::KEY_F, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1171,7 +1266,7 @@ fn main() {
         vec![
           [sys::KEY_K, 1],
           [sys::KEY_K, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1180,7 +1275,7 @@ fn main() {
         vec![
           [sys::KEY_N, 1],
           [sys::KEY_N, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1189,7 +1284,7 @@ fn main() {
         vec![
           [sys::KEY_P, 1],
           [sys::KEY_P, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
       (
@@ -1198,13 +1293,14 @@ fn main() {
         vec![
           [sys::KEY_U, 1],
           [sys::KEY_U, 0],
-          [0, REMAP_INDEX_OTHERS as i32],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
     ],
   ];
 
   // let mut notifier: Option<NotificationHandle> = None;
+  let mut repetitions = 0;
   let mut remap_index: usize = 0;
   let mut remap_index_next: usize = 0;
   let mut last_remap: Option<usize> = None;
@@ -1216,17 +1312,22 @@ fn main() {
     code: 0,
     value: 0,
   };
+  let mut remap_title = "";
+  let mut macro_title = "";
+  let mut repeat_title = "".to_string();
+  let mut stdin = std::io::stdin();
+  let mut output = Stdoutput::new();
   while let std::io::Result::Ok(mut event) = read_input_event(&mut stdin) {
     match event.kind {
       input_linux::EventKind::Key => (),
       input_linux::EventKind::Misc => {
         if event.code != input_linux::MiscKind::Scancode as u16 {
-          write_input_event(&mut stdout, event).unwrap();
+          output.write_event(event).unwrap();
         }
         continue;
       }
       _ => {
-        write_input_event(&mut stdout, event).unwrap();
+        output.write_event(event).unwrap();
         continue;
       }
     }
@@ -1246,11 +1347,11 @@ fn main() {
           if event.value == 1 {
             wmconn.toggle_caps_lock();
           }
-        },
+        }
         _ => (),
       }
     } else {
-      write_input_event(&mut stdout, event).unwrap();
+      output.write_event(event).unwrap();
       continue;
     }
 
@@ -1260,27 +1361,28 @@ fn main() {
         while let Some(key) = fake_writed_keys.pop() {
           fake_event.code = key;
           fake_event.value = 1;
-          write_input_event(&mut stdout, fake_event).unwrap();
+          output.write_event(fake_event).unwrap();
         }
         keyboard.set(event.code, event.value);
         if avoid_keys.contains(&event.code) {
           avoid_keys.retain(|&key| key != event.code);
           continue;
         }
+        output.write_event(event).unwrap();
       }
       1 => {
         last_remap = None;
         while let Some(key) = fake_writed_keys.pop() {
           fake_event.code = key;
           fake_event.value = 1;
-          write_input_event(&mut stdout, fake_event).unwrap();
+          output.write_event(fake_event).unwrap();
         }
         keyboard.set(event.code, event.value);
         if avoid_keys.is_empty() {
           if remap_index_next <= REMAP_INDEX_OTHERS {
             match wmconn.get_group_class() {
               GroupClass::Void => {
-                write_input_event(&mut stdout, event).unwrap();
+                output.write_event(event).unwrap();
                 continue;
               }
               GroupClass::Emacs => {
@@ -1298,6 +1400,7 @@ fn main() {
           }
 
           let mut avoid_event = false;
+          let mut avoid_repeat = false;
           for (index, (pressed_keys, keep_keys, fake_keys)) in
             remaps[remap_index].iter().enumerate()
           {
@@ -1308,37 +1411,134 @@ fn main() {
                 }
                 fake_event.code = pressed_key as u16;
                 fake_event.value = 0;
-                write_input_event(&mut stdout, fake_event).unwrap();
+                output.write_event(fake_event).unwrap();
                 fake_writed_keys.push(fake_event.code);
               }
               last_remap = Some(index);
               avoid_event = true;
               for fake_key in fake_keys.iter() {
-                if fake_key[0] == 0 {
-                  remap_index_next = fake_key[1] as usize;
-
-                  wmconn.show_text(match remap_index_next {
-                    3 => Some("C+SPC"),
-                    4 => Some("C+X -> {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}"),
-                    5 => Some("C+C -> {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}"),
-                    _ => None,
-                  });
-
-                  while let Some(key) = fake_writed_keys.pop() {
-                    avoid_keys.push(key);
+                match fake_key[0] {
+                  ACTION_PREFIX => {
+                    repetitions = repetitions * 10 + fake_key[1];
+                    repeat_title = format!("({repetitions})");
+                    wmconn.show_text(
+                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                    );
+                    avoid_repeat = true;
                   }
-                } else {
-                  fake_event.code = fake_key[0] as u16;
-                  fake_event.value = fake_key[1];
-                  write_input_event(&mut stdout, fake_event).unwrap();
+                  ACTION_MACRO => {
+                    match fake_key[1] {
+                      ACTION_MACRO_START => {
+                        output.start_recording();
+                        macro_title = "RECORDING";
+                        wmconn.show_text(
+                          &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                        );
+                      }
+                      ACTION_MACRO_STOP => {
+                        output.stop_recording();
+                        macro_title = "";
+                        wmconn.show_text(
+                          &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                        );
+                      }
+                      ACTION_MACRO_EXECUTE => {
+                        output.write_events().unwrap();
+                      }
+                      _ => (),
+                    }
+
+                    while let Some(key) = fake_writed_keys.pop() {
+                      avoid_keys.push(key);
+                    }
+                  }
+                  ACTION_REMAP => {
+                    remap_index_next = fake_key[1] as usize;
+                    remap_title = match remap_index_next {
+                      3 => ">C+SPC",
+                      4 => ">C+X > {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}",
+                      5 => ">C+C > {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}",
+                      _ => "",
+                    };
+                    if fake_keys.len() == 1 {
+                      avoid_repeat = true;
+                    }
+                    wmconn.show_text(
+                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                    );
+
+                    while let Some(key) = fake_writed_keys.pop() {
+                      avoid_keys.push(key);
+                    }
+                  }
+                  _ => {
+                    fake_event.code = fake_key[0] as u16;
+                    fake_event.value = fake_key[1];
+                    output.write_event(fake_event).unwrap();
+                  }
                 }
               }
               avoid_keys.push(event.code);
+              if avoid_repeat {
+                break;
+              }
+              loop {
+                match repetitions {
+                  0 => break,
+                  1 => {
+                    repetitions = 0;
+                    repeat_title = "".to_string();
+                    wmconn.show_text(
+                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                    );
+                    break;
+                  }
+                  _ => (),
+                }
+                repetitions -= 1;
+                for fake_key in fake_keys.iter() {
+                  match fake_key[0] {
+                    ACTION_MACRO => {
+                      if fake_key[1] == ACTION_MACRO_EXECUTE {
+                        output.write_events().unwrap();
+                      }
+                    }
+                    ACTION_REMAP => (),
+                    _ => {
+                      fake_event.code = fake_key[0] as u16;
+                      fake_event.value = fake_key[1];
+                      output.write_event(fake_event).unwrap();
+                    }
+                  }
+                }
+              }
               break;
             }
           }
           if avoid_event {
             continue;
+          }
+          output.write_event(event).unwrap();
+          if avoid_repeat || is_modifier(event.code) {
+            continue;
+          }
+          loop {
+            match repetitions {
+              0 => break,
+              1 => {
+                repetitions = 0;
+                repeat_title = "".to_string();
+                wmconn
+                  .show_text(&(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)));
+                break;
+              }
+              _ => (),
+            }
+            repetitions -= 1;
+            event.value = 0;
+            output.write_event(event).unwrap();
+            event.value = 1;
+            output.write_event(event).unwrap();
           }
         }
         if remap_index > REMAP_INDEX_OTHERS {
@@ -1350,13 +1550,13 @@ fn main() {
           for fake_key in remaps[remap_index][last_remap].2.iter() {
             fake_event.code = fake_key[0] as u16;
             fake_event.value = fake_key[1];
-            write_input_event(&mut stdout, fake_event).unwrap();
+            output.write_event(fake_event).unwrap();
           }
           continue;
         }
+        output.write_event(event).unwrap();
       }
       _ => (),
     }
-    write_input_event(&mut stdout, event).unwrap();
   }
 }

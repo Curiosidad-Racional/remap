@@ -43,7 +43,7 @@ then
         # yad --name='yad:*' --button=Ok --text-width=13 --text='Started remap' &
         dunstify -a remap -u normal -t 2000 "Started remap"
         intercept -g "$DEV" \
-            | ./target/release/remap -C "feh --no-fehbg --bg-fill red.png" -c "/home/$SUDO_USER/.fehbg" "$@" \
+            | ./target/release/remap "$@" \
             | uinput -d "$DEV"
         # yad --name='yad:*' --button=Yes --button=No --text='Relaunch remap?' || break
     done
