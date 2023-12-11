@@ -2,6 +2,7 @@ use input_linux::sys;
 // use notify_rust::{Notification, NotificationHandle};
 use std::io::{Read, Write};
 use std::time::Duration;
+use std::collections::HashMap;
 
 const REMAP_INDEX_OTHERS: usize = 2;
 const ACTION_REMAP: i32 = 0;
@@ -510,50 +511,8 @@ impl Stdoutput {
   }
 }
 
-struct Keyboard {
-  values: [i32; 249],
-  total: i32,
-}
-
-impl Keyboard {
-  fn new() -> Self {
-    Keyboard {
-      values: [0; 249],
-      total: 0,
-    }
-  }
-
-  fn set(&mut self, code: u16, value: i32) {
-    if let 0..=1 = value {
-      self.total += value - self.values[code as usize];
-      self.values[code as usize] = value;
-    }
-  }
-
-  fn get(&self, code: usize) -> i32 {
-    self.values[code]
-  }
-
-  fn check(&self, codes: &[i32]) -> bool {
-    let mut sum = 0;
-    for code in codes {
-      let value = self.get(*code as usize);
-      if value == 0 {
-        return false;
-      }
-      sum += value;
-    }
-    if sum != self.total {
-      return false;
-    }
-    true
-  }
-}
-
-fn main() {
-  let mut keyboard = Keyboard::new();
-  let mut wmconn = WMConn::new();
-
+#[allow(clippy::type_complexity)]
+fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> {
   let remaps = [
     // 0 - Emacs
     vec![(
@@ -1344,12 +1303,36 @@ fn main() {
       ),
     ],
   ];
+  let mut config = HashMap::new();
+  for (index, remap) in remaps.iter().enumerate() {
+    for (pressed_keys, keep_keys, fake_keys) in remap {
+      let mut pressed_keys = pressed_keys.clone();
+      pressed_keys.sort();
+      if !config.contains_key(&pressed_keys) {
+        config.insert(
+          pressed_keys.clone(),
+          HashMap::new(),
+        );
+      }
+      config.get_mut(&pressed_keys).unwrap().insert(
+        index,
+        (keep_keys.clone(), fake_keys.clone()),
+      );
+    }
+  }
+  config
+}
+
+fn main() {
+  let config = get_config();
+  let mut pressed_keys = Vec::new();
+  let mut wmconn = WMConn::new();
 
   // let mut notifier: Option<NotificationHandle> = None;
   let mut repetitions = 0;
   let mut remap_index: usize = 0;
   let mut remap_index_next: usize = 0;
-  let mut last_remap: Option<usize> = None;
+  let mut last_remap: Option<Vec<i32>> = None;
   let mut avoid_keys = Vec::new();
   let mut fake_writed_keys = Vec::new();
   let mut fake_event = input_linux::InputEvent {
@@ -1409,7 +1392,7 @@ fn main() {
           fake_event.value = 1;
           output.write_event(fake_event).unwrap();
         }
-        keyboard.set(event.code, event.value);
+        pressed_keys.retain(|&key| key != event.code as i32);
         if avoid_keys.contains(&event.code) {
           avoid_keys.retain(|&key| key != event.code);
           continue;
@@ -1423,34 +1406,33 @@ fn main() {
           fake_event.value = 1;
           output.write_event(fake_event).unwrap();
         }
-        keyboard.set(event.code, event.value);
+        pressed_keys.push(event.code as i32);
+        let mut pressed_keys = pressed_keys.clone();
+        pressed_keys.sort();
         if avoid_keys.is_empty() {
-          if remap_index_next <= REMAP_INDEX_OTHERS {
-            match wmconn.get_group_class() {
-              GroupClass::Void => {
-                output.write_event(event).unwrap();
-                continue;
-              }
-              GroupClass::Emacs => {
-                remap_index = 0;
-              }
-              GroupClass::Term => {
-                remap_index = 1;
-              }
-              GroupClass::Others => {
-                remap_index = REMAP_INDEX_OTHERS;
-              }
-            }
-          } else {
-            remap_index = remap_index_next;
-          }
 
-          let mut avoid_event = false;
           let mut avoid_repeat = false;
-          for (index, (pressed_keys, keep_keys, fake_keys)) in
-            remaps[remap_index].iter().enumerate()
-          {
-            if keyboard.check(pressed_keys) {
+          if let Some(remap) = config.get(&pressed_keys) {
+            if remap_index_next <= REMAP_INDEX_OTHERS {
+              match wmconn.get_group_class() {
+                GroupClass::Void => {
+                  output.write_event(event).unwrap();
+                  continue;
+                }
+                GroupClass::Emacs => {
+                  remap_index = 0;
+                }
+                GroupClass::Term => {
+                  remap_index = 1;
+                }
+                GroupClass::Others => {
+                  remap_index = REMAP_INDEX_OTHERS;
+                }
+              }
+            } else {
+              remap_index = remap_index_next;
+            }
+            if let Some((keep_keys, fake_keys)) = remap.get(&remap_index) {
               for &pressed_key in pressed_keys.iter().rev() {
                 if event.code == pressed_key as u16 || keep_keys.contains(&pressed_key) {
                   continue;
@@ -1460,8 +1442,7 @@ fn main() {
                 output.write_event(fake_event).unwrap();
                 fake_writed_keys.push(fake_event.code);
               }
-              last_remap = Some(index);
-              avoid_event = true;
+              last_remap = Some(pressed_keys);
               for fake_key in fake_keys.iter() {
                 match fake_key[0] {
                   ACTION_PREFIX => {
@@ -1476,7 +1457,7 @@ fn main() {
                     match fake_key[1] {
                       ACTION_MACRO_START => {
                         output.start_recording();
-                        macro_title = "REC·";
+                        macro_title = "REC:";
                         wmconn.show_text(
                           &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
                         );
@@ -1526,7 +1507,7 @@ fn main() {
               }
               avoid_keys.push(event.code);
               if avoid_repeat {
-                break;
+                continue;
               }
               loop {
                 match repetitions {
@@ -1558,11 +1539,8 @@ fn main() {
                   }
                 }
               }
-              break;
+              continue;
             }
-          }
-          if avoid_event {
-            continue;
           }
           output.write_event(event).unwrap();
           if avoid_repeat || is_modifier(event.code) {
@@ -1592,8 +1570,8 @@ fn main() {
         }
       }
       2 => {
-        if let Some(last_remap) = last_remap {
-          for fake_key in remaps[remap_index][last_remap].2.iter() {
+        if let Some(ref last_remap) = last_remap {
+          for fake_key in config.get(last_remap).unwrap().get(&remap_index).unwrap().1.iter() {
             fake_event.code = fake_key[0] as u16;
             fake_event.value = fake_key[1];
             output.write_event(fake_event).unwrap();
