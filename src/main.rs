@@ -1,16 +1,23 @@
 use input_linux::sys;
 // use notify_rust::{Notification, NotificationHandle};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
-use std::collections::HashMap;
 
-const REMAP_INDEX_OTHERS: usize = 2;
 const ACTION_REMAP: i32 = 0;
 const ACTION_MACRO: i32 = -1;
 const ACTION_PREFIX: i32 = -2;
+const ACTION_FUNCTION: i32 = -3;
+
+const REMAP_INDEX_OTHERS: usize = 2;
+const REMAP_INDEX_SELECT: usize = 3;
+const REMAP_INDEX_CTRL_X: usize = 4;
+const REMAP_INDEX_CTRL_C: usize = 5;
+
 const ACTION_MACRO_START: i32 = 0;
 const ACTION_MACRO_STOP: i32 = 1;
 const ACTION_MACRO_EXECUTE: i32 = 2;
+const ACTION_FUNCTION_CLOSE: i32 = 0;
 
 // [ DEBUG
 // const KEY_NAMES: [&str; 249] = [
@@ -302,19 +309,32 @@ struct WMConn {
   last_instant: Option<std::time::Instant>,
   focused: Option<xcb::x::Window>,
   child: Option<xcb::x::Window>,
-  caps_lock: Option<xcb::x::Window>,
+  caps_lock: bool,
+  caps_lock_on: std::process::Command,
+  caps_lock_off: std::process::Command,
 }
 
 impl WMConn {
   fn new() -> Self {
     let (conn, screen_num) = xcb::Connection::connect(None).unwrap();
+    let mut caps_lock_on = std::process::Command::new("hsetroot");
+    caps_lock_on.args(["-solid", "#ff0000"]);
     Self {
       conn,
       screen_num,
       last_instant: None,
       focused: None,
       child: None,
-      caps_lock: None,
+      caps_lock: false,
+      caps_lock_on,
+      caps_lock_off: std::process::Command::new(
+        std::path::Path::new("/home")
+          .join(
+            std::env::var("SUDO_USER")
+              .unwrap_or_else(|_| std::env::var("USER").unwrap()),
+          )
+          .join(".fehbg"),
+      ),
     }
   }
 
@@ -349,9 +369,9 @@ impl WMConn {
       if let Ok(reply) = self.conn.wait_for_reply(cookie) {
         if let Ok(class) = std::str::from_utf8(reply.value()) {
           return match class {
-            "st-256color\0st-256color\0" | "st-256color\0Scratchpad\0" | "emacs\0Emacs\0" => {
-              GroupClass::Emacs
-            }
+            "st-256color\0st-256color\0"
+            | "st-256color\0Scratchpad\0"
+            | "emacs\0Emacs\0" => GroupClass::Emacs,
             "urxvt\0Urxvt\0" | "xterm\0Xterm\0" => GroupClass::Term,
             _ => GroupClass::Others,
           };
@@ -361,7 +381,20 @@ impl WMConn {
     GroupClass::Void
   }
 
-  fn create_text_window(&self, text: &[u8], x: i16, y: i16, fg: u32, bg: u32) -> xcb::x::Window {
+  fn close_focused_window(&mut self) {
+    if let Ok(window) = self.get_focused_window() {
+      self.conn.send_request(&xcb::x::DestroyWindow { window });
+    }
+  }
+
+  fn create_text_window(
+    &self,
+    text: &[u8],
+    x: i16,
+    y: i16,
+    fg: u32,
+    bg: u32,
+  ) -> xcb::x::Window {
     let cookie = self.conn.send_request(&xcb::x::GetInputFocus {});
     let reply = self.conn.wait_for_reply(cookie);
 
@@ -435,27 +468,37 @@ impl WMConn {
       self.child = None;
     }
     if !text.is_empty() {
-      self.child = Some(self.create_text_window(text.as_bytes(), 0, 0, 0xffffff, 0x0818A8));
+      self.child = Some(self.create_text_window(
+        text.as_bytes(),
+        0,
+        0,
+        0xffffffff,
+        0xff0818a8,
+      ));
     }
   }
 
   fn toggle_caps_lock(&mut self) {
-    if let Some(child) = self.caps_lock {
-      self
-        .conn
-        .send_request(&xcb::x::DestroyWindow { window: child });
-      self.conn.flush().unwrap();
-      self.caps_lock = None;
-    } else {
-      self.caps_lock = Some(self.create_text_window(b"C", 0, 20, 0x000000, 0xea4335));
+    self.caps_lock = !self.caps_lock;
+    if let Err(e) = {
+      if self.caps_lock {
+        self.caps_lock_on.spawn()
+      } else {
+        self.caps_lock_off.spawn()
+      }
+    } {
+      eprintln!("Failed to spawn process: {}", e);
     }
   }
 }
 
-fn read_input_event(stdin: &mut std::io::Stdin) -> std::io::Result<input_linux::InputEvent> {
+fn read_input_event(
+  stdin: &mut std::io::Stdin,
+) -> std::io::Result<input_linux::InputEvent> {
   let mut buf = [0; std::mem::size_of::<input_linux::InputEvent>()];
   stdin.read_exact(&mut buf)?;
-  let input_event: input_linux::InputEvent = unsafe { std::mem::transmute(buf) };
+  let input_event: input_linux::InputEvent =
+    unsafe { std::mem::transmute(buf) };
   Ok(input_event)
 }
 
@@ -491,16 +534,15 @@ impl Stdoutput {
     Ok(())
   }
 
-  fn write_event(&mut self, event: input_linux::InputEvent) -> std::io::Result<()> {
+  fn write_event(
+    &mut self,
+    event: input_linux::InputEvent,
+  ) -> std::io::Result<()> {
     // [ DEBUG
-    // let mut stderr = std::io::stderr();
-    // stderr.write_all(
-    //   format!(
-    //     "{:?}\t{:?}\t{}\t{}\n",
-    //     event.time, event.kind, KEY_NAMES[event.code as usize], event.value
-    //   )
-    //   .as_bytes(),
-    // )?;
+    // eprintln!(
+    //   "{:?}\t{:?}\t{}\t{}",
+    //   event.time, event.kind, KEY_NAMES[event.code as usize], event.value
+    // );
     // ] DEBUG
     self.stdout.write_all(event.as_bytes())?;
     self.stdout.flush()?;
@@ -512,7 +554,8 @@ impl Stdoutput {
 }
 
 #[allow(clippy::type_complexity)]
-fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> {
+fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
+{
   let remaps = [
     // 0 - Emacs
     vec![(
@@ -737,18 +780,18 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> 
       // Change remap
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_SPACE],
-        vec![],
-        vec![[ACTION_REMAP, 3]],
+        vec![sys::KEY_LEFTCTRL],
+        vec![[ACTION_REMAP, REMAP_INDEX_SELECT as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_X],
         vec![sys::KEY_LEFTCTRL],
-        vec![[ACTION_REMAP, 4]],
+        vec![[ACTION_REMAP, REMAP_INDEX_CTRL_X as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_C],
         vec![sys::KEY_LEFTCTRL],
-        vec![[ACTION_REMAP, 5]],
+        vec![[ACTION_REMAP, REMAP_INDEX_CTRL_C as i32]],
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_1],
@@ -810,7 +853,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> 
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_SPACE],
-        vec![],
+        vec![sys::KEY_LEFTCTRL],
         vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
       ),
       (
@@ -1154,12 +1197,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> 
         vec![sys::KEY_LEFTCTRL, sys::KEY_C],
         vec![],
         vec![
-          [sys::KEY_LEFTCTRL, 1],
-          [sys::KEY_LEFTSHIFT, 1],
-          [sys::KEY_W, 1],
-          [sys::KEY_W, 0],
-          [sys::KEY_LEFTCTRL, 0],
-          [sys::KEY_LEFTSHIFT, 0],
+          [ACTION_FUNCTION, ACTION_FUNCTION_CLOSE],
           [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
@@ -1301,6 +1339,96 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> 
           [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
         ],
       ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_1],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_1, 1],
+          [sys::KEY_1, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_2],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_2, 1],
+          [sys::KEY_2, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_3],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_3, 1],
+          [sys::KEY_3, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_4],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_4, 1],
+          [sys::KEY_4, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_5],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_5, 1],
+          [sys::KEY_5, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_6],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_6, 1],
+          [sys::KEY_6, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_7],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_7, 1],
+          [sys::KEY_7, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_8],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_8, 1],
+          [sys::KEY_8, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_9],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_9, 1],
+          [sys::KEY_9, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
+      (
+        vec![sys::KEY_LEFTCTRL, sys::KEY_0],
+        vec![sys::KEY_LEFTCTRL],
+        vec![
+          [sys::KEY_0, 1],
+          [sys::KEY_0, 0],
+          [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
+        ],
+      ),
     ],
   ];
   let mut config = HashMap::new();
@@ -1309,15 +1437,12 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>> 
       let mut pressed_keys = pressed_keys.clone();
       pressed_keys.sort();
       if !config.contains_key(&pressed_keys) {
-        config.insert(
-          pressed_keys.clone(),
-          HashMap::new(),
-        );
+        config.insert(pressed_keys.clone(), HashMap::new());
       }
-      config.get_mut(&pressed_keys).unwrap().insert(
-        index,
-        (keep_keys.clone(), fake_keys.clone()),
-      );
+      config
+        .get_mut(&pressed_keys)
+        .unwrap()
+        .insert(index, (keep_keys.clone(), fake_keys.clone()));
     }
   }
   config
@@ -1410,7 +1535,6 @@ fn main() {
         let mut pressed_keys = pressed_keys.clone();
         pressed_keys.sort();
         if avoid_keys.is_empty() {
-
           let mut avoid_repeat = false;
           if let Some(remap) = config.get(&pressed_keys) {
             if remap_index_next <= REMAP_INDEX_OTHERS {
@@ -1434,7 +1558,9 @@ fn main() {
             }
             if let Some((keep_keys, fake_keys)) = remap.get(&remap_index) {
               for &pressed_key in pressed_keys.iter().rev() {
-                if event.code == pressed_key as u16 || keep_keys.contains(&pressed_key) {
+                if event.code == pressed_key as u16
+                  || keep_keys.contains(&pressed_key)
+                {
                   continue;
                 }
                 fake_event.code = pressed_key as u16;
@@ -1449,7 +1575,8 @@ fn main() {
                     repetitions = repetitions * 10 + fake_key[1];
                     repeat_title = format!("({repetitions})");
                     wmconn.show_text(
-                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                      &(macro_title.to_owned()
+                        + &(repeat_title.to_owned() + remap_title)),
                     );
                     avoid_repeat = true;
                   }
@@ -1459,20 +1586,22 @@ fn main() {
                         output.start_recording();
                         macro_title = "REC:";
                         wmconn.show_text(
-                          &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                          &(macro_title.to_owned()
+                            + &(repeat_title.to_owned() + remap_title)),
                         );
                       }
                       ACTION_MACRO_STOP => {
                         output.stop_recording();
                         macro_title = "";
                         wmconn.show_text(
-                          &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                          &(macro_title.to_owned()
+                            + &(repeat_title.to_owned() + remap_title)),
                         );
                       }
                       ACTION_MACRO_EXECUTE => {
                         output.write_events().unwrap();
                       }
-                      _ => (),
+                      _ => eprintln!("Unknown macro action: {}", fake_key[1]),
                     }
 
                     while let Some(key) = fake_writed_keys.pop() {
@@ -1483,21 +1612,28 @@ fn main() {
                     remap_index_next = fake_key[1] as usize;
                     remap_title = match remap_index_next {
                       3 => "C+SPC",
-                      4 => "C+X > {2,3,5,B,E,K,O,R,T,U,(,),S+O,C+C,C+F,C+S}",
-                      5 => "C+C > {T,C+A,C+B,C+C,C+D,C+E,C+F,C+K,C+N,C+P,C+U,C+0-9}",
+                      4 => "C+X > 2 3 5 B E K O R T U ( ) S+O C+C C+F C+S",
+                      5 => {
+                        "C+C > T C+A C+B C+C C+D C+E C+F C+K C+N C+P C+U C+0-9"
+                      }
                       _ => "",
                     };
                     if fake_keys.len() == 1 {
                       avoid_repeat = true;
                     }
                     wmconn.show_text(
-                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                      &(macro_title.to_owned()
+                        + &(repeat_title.to_owned() + remap_title)),
                     );
 
                     while let Some(key) = fake_writed_keys.pop() {
                       avoid_keys.push(key);
                     }
                   }
+                  ACTION_FUNCTION => match fake_key[1] {
+                    ACTION_FUNCTION_CLOSE => wmconn.close_focused_window(),
+                    _ => eprintln!("Unknown function: {}", fake_key[1]),
+                  },
                   _ => {
                     fake_event.code = fake_key[0] as u16;
                     fake_event.value = fake_key[1];
@@ -1516,7 +1652,8 @@ fn main() {
                     repetitions = 0;
                     repeat_title = "".to_string();
                     wmconn.show_text(
-                      &(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)),
+                      &(macro_title.to_owned()
+                        + &(repeat_title.to_owned() + remap_title)),
                     );
                     break;
                   }
@@ -1552,8 +1689,10 @@ fn main() {
               1 => {
                 repetitions = 0;
                 repeat_title = "".to_string();
-                wmconn
-                  .show_text(&(macro_title.to_owned() + &(repeat_title.to_owned() + remap_title)));
+                wmconn.show_text(
+                  &(macro_title.to_owned()
+                    + &(repeat_title.to_owned() + remap_title)),
+                );
                 break;
               }
               _ => (),
@@ -1571,7 +1710,14 @@ fn main() {
       }
       2 => {
         if let Some(ref last_remap) = last_remap {
-          for fake_key in config.get(last_remap).unwrap().get(&remap_index).unwrap().1.iter() {
+          for fake_key in config
+            .get(last_remap)
+            .unwrap()
+            .get(&remap_index)
+            .unwrap()
+            .1
+            .iter()
+          {
             fake_event.code = fake_key[0] as u16;
             fake_event.value = fake_key[1];
             output.write_event(fake_event).unwrap();

@@ -5,14 +5,44 @@ get_device() {
         |sed -nr 's/^.*sysrq kbd (leds )?(event[0-9]+).*$/\2/p' \
         |head -1
 }
+set_keyboards() {
+    USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
+        |grep -B 1 -E '^P: Phys=u'|grep '^N: Name='|grep -v 'DaKai 2.4G RX' \
+        |cut -d'"' -f2|tr '\n' '!')"
+    OTHKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
+        |grep -B 1 -E '^P: Phys=[^u]'|grep '^N: Name=' \
+        |cut -d'"' -f2|head -c -1|tr '\n' '!')"
+}
+
 if [ -n "$SUDO_USER" ]
 then
     # exec >/tmp/remap.log 2>&1
     cd "$(dirname "$SCRIPT")"
+    pgrep -x remap.sh | grep -v $$ | xargs -r kill -9
     pkill -x -9 intercept
 
-    DEVICE="$1"
-    shift
+    if [ -n "$1" ]
+    then
+        DEVICE="$1"
+        shift
+    else
+        set_keyboards
+        INPUTS="$(yad --separator='|' --focus-field=1 --form --field=device:CB --field=args:CB -- "$USBKBD$OTHKBD" '-s!-s -v')"
+        if [ "$?" != 0 ]
+        then
+            exit
+        fi
+        IFS='|' read -r DEVICE PARAMS <<-EOF
+		$INPUTS
+		EOF
+
+        DEV="/dev/input/$(get_device "$DEVICE")"
+        if [ ! -c "$DEV" ]
+        then
+            yad --button=Ok --text="<span foreground=\"red\">Invalid device:</span> $DEV"
+            exit 2
+        fi
+    fi
     (while :
     do
         COUNT=0
@@ -51,12 +81,7 @@ then
     dunstify -a remap -u critical -t 2000 "Stopped remap"
     ) &
 else
-    USBKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
-        |grep -B 1 -E '^P: Phys=u'|grep '^N: Name='|grep -v 'DaKai 2.4G RX' \
-        |cut -d'"' -f2|tr '\n' '!')"
-    OTHKBD="$(grep -B 4 -E 'sysrq kbd (leds )?(event[0-9]+)' /proc/bus/input/devices \
-        |grep -B 1 -E '^P: Phys=[^u]'|grep '^N: Name=' \
-        |cut -d'"' -f2|head -c -1|tr '\n' '!')"
+    set_keyboards
     while :
     do
         INPUTS="$(yad --separator='|' --focus-field=3 --form --field=device:CB --field=args:CB --field=sudo:H -- "$USBKBD$OTHKBD" '-s!-s -v')"
