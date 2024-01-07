@@ -1,5 +1,6 @@
 use input_linux::sys;
 // use notify_rust::{Notification, NotificationHandle};
+use xcb::Xid;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -383,7 +384,9 @@ impl WMConn {
 
   fn close_focused_window(&mut self) {
     if let Ok(window) = self.get_focused_window() {
+      self.conn.send_request(&xcb::x::KillClient { resource: window.resource_id() });
       self.conn.send_request(&xcb::x::DestroyWindow { window });
+      self.conn.flush().unwrap();
     }
   }
 
