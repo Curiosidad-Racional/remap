@@ -1,9 +1,9 @@
 use input_linux::sys;
 // use notify_rust::{Notification, NotificationHandle};
-use xcb::Xid;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
+use xcb::Xid;
 
 const ACTION_REMAP: i32 = 0;
 const ACTION_MACRO: i32 = -1;
@@ -384,7 +384,9 @@ impl WMConn {
 
   fn close_focused_window(&mut self) {
     if let Ok(window) = self.get_focused_window() {
-      self.conn.send_request(&xcb::x::KillClient { resource: window.resource_id() });
+      self.conn.send_request(&xcb::x::KillClient {
+        resource: window.resource_id(),
+      });
       self.conn.send_request(&xcb::x::DestroyWindow { window });
       self.conn.flush().unwrap();
     }
@@ -1433,6 +1435,29 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
         ],
       ),
     ],
+    // 6 - Vi mode
+    // vec![
+    //   (
+    //     vec![sys::KEY_ESC],
+    //     vec![],
+    //     vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
+    //   ),
+    //   (
+    //     vec![sys::KEY_LEFTCTRL, sys::KEY_G],
+    //     vec![],
+    //     vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
+    //   ),
+    //   (
+    //     vec![sys::KEY_I],
+    //     vec![],
+    //     vec![[ACTION_REMAP, REMAP_INDEX_OTHERS as i32]],
+    //   ),
+    //   (
+    //     vec![sys::KEY_J],
+    //     vec![],
+    //     vec![[sys::KEY_DOWN, 1], [sys::KEY_DOWN, 0]],
+    //   ),
+    // ],
   ];
   let mut config = HashMap::new();
   for (index, remap) in remaps.iter().enumerate() {
@@ -1540,7 +1565,9 @@ fn main() {
         if avoid_keys.is_empty() {
           let mut avoid_repeat = false;
           if let Some(remap) = config.get(&pressed_keys) {
-            if remap_index_next <= REMAP_INDEX_OTHERS {
+            if remap_index_next <= REMAP_INDEX_OTHERS
+              && *remap.keys().min().unwrap() <= REMAP_INDEX_OTHERS
+            {
               match wmconn.get_group_class() {
                 GroupClass::Void => {
                   output.write_event(event).unwrap();
