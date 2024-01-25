@@ -1200,7 +1200,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
       ),
       (
         vec![sys::KEY_LEFTCTRL, sys::KEY_C],
-        vec![],
+        vec![sys::KEY_LEFTCTRL],
         vec![
           [ACTION_FUNCTION, ACTION_FUNCTION_CLOSE],
           [ACTION_REMAP, REMAP_INDEX_OTHERS as i32],
