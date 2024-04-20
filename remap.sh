@@ -1,4 +1,9 @@
 #!/bin/sh
+if ! type intercept >/dev/null
+then
+    echo "Missing https://gitlab.com/interception/linux/tools"
+    exit
+fi
 SCRIPT="$(realpath "$0")"
 get_device() {
     grep -A 4 "$1" /proc/bus/input/devices \

@@ -275,25 +275,20 @@ const ACTION_FUNCTION_CLOSE: i32 = 0;
 // ] DEBUG
 
 fn is_modifier(code: u16) -> bool {
-  match i32::try_from(code) {
-    Ok(code) => {
-      matches!(
-        code,
-        sys::KEY_LEFTCTRL
-          | sys::KEY_RIGHTCTRL
-          | sys::KEY_LEFTALT
-          | sys::KEY_RIGHTALT
-          | sys::KEY_LEFTSHIFT
-          | sys::KEY_RIGHTSHIFT
-          | sys::KEY_LEFTMETA
-          | sys::KEY_RIGHTMETA
-          | sys::KEY_CAPSLOCK
-          | sys::KEY_NUMLOCK
-          | sys::KEY_SCROLLLOCK
-      )
-    }
-    Err(_) => false,
-  }
+  matches!(
+    i32::from(code),
+    sys::KEY_LEFTCTRL
+      | sys::KEY_RIGHTCTRL
+      | sys::KEY_LEFTALT
+      | sys::KEY_RIGHTALT
+      | sys::KEY_LEFTSHIFT
+      | sys::KEY_RIGHTSHIFT
+      | sys::KEY_LEFTMETA
+      | sys::KEY_RIGHTMETA
+      | sys::KEY_CAPSLOCK
+      | sys::KEY_NUMLOCK
+      | sys::KEY_SCROLLLOCK
+  )
 }
 
 #[derive(Debug)]
@@ -304,9 +299,21 @@ enum GroupClass {
   Others,
 }
 
+xcb::atoms_struct! {
+  #[derive(Debug)]
+  struct Atoms {
+    wm_protocols    => b"WM_PROTOCOLS",
+    wm_del_window   => b"WM_DELETE_WINDOW",
+    wm_state        => b"_NET_WM_STATE",
+    wm_state_maxv   => b"_NET_WM_STATE_MAXIMIZED_VERT",
+    wm_state_maxh   => b"_NET_WM_STATE_MAXIMIZED_HORZ",
+  }
+}
+
 struct WMConn {
   conn: xcb::Connection,
   screen_num: i32,
+  atoms: Atoms,
   last_instant: Option<std::time::Instant>,
   focused: Option<xcb::x::Window>,
   child: Option<xcb::x::Window>,
@@ -318,11 +325,13 @@ struct WMConn {
 impl WMConn {
   fn new() -> Self {
     let (conn, screen_num) = xcb::Connection::connect(None).unwrap();
+    let atoms = Atoms::intern_all(&conn).unwrap();
     let mut caps_lock_on = std::process::Command::new("hsetroot");
     caps_lock_on.args(["-solid", "#ff0000"]);
     Self {
       conn,
       screen_num,
+      atoms,
       last_instant: None,
       focused: None,
       child: None,
@@ -382,13 +391,53 @@ impl WMConn {
     GroupClass::Void
   }
 
+  // https://github.com/rust-x-bindings/rust-xcb/issues/178
   fn close_focused_window(&mut self) {
     if let Ok(window) = self.get_focused_window() {
-      self.conn.send_request(&xcb::x::KillClient {
-        resource: window.resource_id(),
-      });
-      self.conn.send_request(&xcb::x::DestroyWindow { window });
       self.conn.flush().unwrap();
+      let cookie = self.conn.send_request(&xcb::x::GetProperty {
+        delete: false,
+        window,
+        property: self.atoms.wm_protocols,
+        r#type: xcb::x::ATOM_ATOM,
+        long_offset: 0,
+        long_length: u32::MAX,
+      });
+      'wm_delete: {
+        if let Ok(reply) = self.conn.wait_for_reply(cookie) {
+          let supports_wm_delete = reply.value::<xcb::x::Atom>()
+            .contains(&self.atoms.wm_del_window);
+          if supports_wm_delete {
+            let event = xcb::x::ClientMessageEvent::new(
+              window,
+              self.atoms.wm_protocols,
+              xcb::x::ClientMessageData::Data32([
+                self.atoms.wm_del_window.resource_id(),
+                xcb::x::CURRENT_TIME,
+                0,
+                0,
+                0,
+              ]),
+            );
+            self.conn.send_request(&xcb::x::SendEvent {
+              propagate: false,
+              destination: xcb::x::SendEventDest::Window(window),
+              event_mask: xcb::x::EventMask::NO_EVENT,
+              event: &event,
+            });
+            break 'wm_delete;
+          }
+        }
+        self.conn.send_request(&xcb::x::KillClient {
+          resource: window.resource_id(),
+        });
+      }
+      self.conn.flush().unwrap();
+      // self.conn.send_request(&xcb::x::UnmapSubwindows { window });
+      // self.conn.send_request(&xcb::x::UnmapWindow { window });
+      // self.conn.send_request(&xcb::x::DestroySubwindows { window });
+      // self.conn.send_request(&xcb::x::DestroyWindow { window });
+      // self.conn.flush().unwrap();
     }
   }
 
@@ -574,7 +623,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
       vec![sys::KEY_RIGHTALT],
       vec![[sys::KEY_GRAVE, 1], [sys::KEY_GRAVE, 0]],
     )],
-    // 2 - Others
+    // 2 - Others (REMAP_INDEX_OTHERS)
     vec![
       (
         vec![sys::KEY_RIGHTALT, sys::KEY_ESC],
@@ -849,7 +898,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
         vec![[ACTION_PREFIX, 0]],
       ),
     ],
-    // 3 - Select Mode
+    // 3 - Select Mode (REMAP_INDEX_SELECT)
     vec![
       (
         vec![sys::KEY_ESC],
@@ -1076,7 +1125,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
         ],
       ),
     ],
-    // 4 - Ctrl x
+    // 4 - Ctrl x (REMAP_INDEX_CTRL_X)
     vec![
       (
         vec![sys::KEY_ESC],
@@ -1231,7 +1280,7 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
         ],
       ),
     ],
-    // 5 - Ctrl c
+    // 5 - Ctrl c (REMAP_INDEX_CTRL_C)
     vec![
       (
         vec![sys::KEY_ESC],
