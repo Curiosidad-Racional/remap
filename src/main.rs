@@ -1,9 +1,13 @@
 use input_linux::sys;
+use regex::{Captures, Regex, Replacer};
 // use notify_rust::{Notification, NotificationHandle};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::thread;
 use std::time::Duration;
 use xcb::Xid;
+
+use x11::xlib;
 
 const ACTION_REMAP: i32 = 0;
 const ACTION_MACRO: i32 = -1;
@@ -317,9 +321,10 @@ struct WMConn {
   last_instant: Option<std::time::Instant>,
   focused: Option<xcb::x::Window>,
   child: Option<xcb::x::Window>,
-  caps_lock: bool,
   caps_lock_on: std::process::Command,
   caps_lock_off: std::process::Command,
+  caps_lock_thread: Option<thread::JoinHandle<()>>,
+  fehbg_path: std::path::PathBuf,
 }
 
 impl WMConn {
@@ -328,6 +333,12 @@ impl WMConn {
     let atoms = Atoms::intern_all(&conn).unwrap();
     let mut caps_lock_on = std::process::Command::new("hsetroot");
     caps_lock_on.args(["-solid", "#ff0000"]);
+    let fehbg_path = std::path::Path::new("/home")
+      .join(
+        std::env::var("SUDO_USER")
+          .unwrap_or_else(|_| std::env::var("USER").unwrap()),
+      )
+      .join(".fehbg");
     Self {
       conn,
       screen_num,
@@ -335,16 +346,10 @@ impl WMConn {
       last_instant: None,
       focused: None,
       child: None,
-      caps_lock: false,
       caps_lock_on,
-      caps_lock_off: std::process::Command::new(
-        std::path::Path::new("/home")
-          .join(
-            std::env::var("SUDO_USER")
-              .unwrap_or_else(|_| std::env::var("USER").unwrap()),
-          )
-          .join(".fehbg"),
-      ),
+      caps_lock_off: std::process::Command::new(fehbg_path.clone()),
+      caps_lock_thread: None,
+      fehbg_path,
     }
   }
 
@@ -381,6 +386,8 @@ impl WMConn {
           return match class {
             "st-256color\0st-256color\0"
             | "st-256color\0Scratchpad\0"
+            | "Alacritty\0Alacritty\0"
+            | "Alacritty\0Scratchpad\0"
             | "emacs\0Emacs\0" => GroupClass::Emacs,
             "urxvt\0Urxvt\0" | "xterm\0Xterm\0" => GroupClass::Term,
             _ => GroupClass::Others,
@@ -405,7 +412,8 @@ impl WMConn {
       });
       'wm_delete: {
         if let Ok(reply) = self.conn.wait_for_reply(cookie) {
-          let supports_wm_delete = reply.value::<xcb::x::Atom>()
+          let supports_wm_delete = reply
+            .value::<xcb::x::Atom>()
             .contains(&self.atoms.wm_del_window);
           if supports_wm_delete {
             let event = xcb::x::ClientMessageEvent::new(
@@ -533,16 +541,73 @@ impl WMConn {
   }
 
   fn toggle_caps_lock(&mut self) {
-    self.caps_lock = !self.caps_lock;
     if let Err(e) = {
-      if self.caps_lock {
-        self.caps_lock_on.spawn()
+      if !get_caps_lock_state() {
+        let caps_lock_on = self.caps_lock_on.spawn();
+        self.caps_lock_thread_spawn();
+        caps_lock_on
       } else {
         self.caps_lock_off.spawn()
       }
     } {
       eprintln!("Failed to spawn process: {}", e);
     }
+  }
+
+  fn caps_lock_thread_spawn(&mut self) {
+    if let Some(thread) = &self.caps_lock_thread {
+      if !thread.is_finished() {
+        return;
+      }
+    }
+    let fehbg_path = self.fehbg_path.clone();
+    self.caps_lock_thread = Some(thread::spawn(move || {
+      let mut caps_lock_off = std::process::Command::new(fehbg_path);
+      unsafe {
+        // Open a connection to the X server
+        let display = xlib::XOpenDisplay(std::ptr::null());
+        if display.is_null() {
+          eprintln!("Unable to open X display");
+          return;
+        }
+
+        // Get the default keyboard device
+        let mut keys_return: xlib::XKeyboardState = std::mem::zeroed();
+        xlib::XGetKeyboardControl(display, &mut keys_return);
+        while keys_return.led_mask & 1 != 0 {
+          thread::sleep(Duration::from_millis(500));
+          xlib::XGetKeyboardControl(display, &mut keys_return);
+        }
+        if let Err(e) = caps_lock_off.spawn() {
+          eprintln!("Failed to spawn process: {}", e);
+        }
+
+        // Close the connection to the X server
+        xlib::XCloseDisplay(display);
+      }
+    }));
+  }
+}
+
+fn get_caps_lock_state() -> bool {
+  unsafe {
+    // Open a connection to the X server
+    let display = xlib::XOpenDisplay(std::ptr::null());
+    if display.is_null() {
+      eprintln!("Unable to open X display");
+      return false;
+    }
+
+    // Get the default keyboard device
+    let mut keys_return: xlib::XKeyboardState = std::mem::zeroed();
+    xlib::XGetKeyboardControl(display, &mut keys_return);
+
+    // Check if the Caps Lock mask is set
+    let caps_lock_state = keys_return.led_mask & 1;
+
+    // Close the connection to the X server
+    xlib::XCloseDisplay(display);
+    caps_lock_state != 0
   }
 }
 
@@ -607,9 +672,78 @@ impl Stdoutput {
   }
 }
 
+const SHIFT_CHARS: [char; 10] =
+  ['=', '!', '"', '·', '$', '%', '&', '/', '(', ')'];
+
+struct ShiftTranslator;
+
+impl Replacer for ShiftTranslator {
+  fn replace_append(&mut self, caps: &Captures<'_>, dst: &mut String) {
+    dst.push(SHIFT_CHARS[caps[2].parse::<usize>().unwrap()]);
+  }
+}
+
 #[allow(clippy::type_complexity)]
-fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
-{
+fn get_config() -> (
+  HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>,
+  HashMap<usize, String>,
+) {
+  let key_repr: HashMap<i32, &'static str> = HashMap::from([
+    (sys::KEY_0, "0"),
+    (sys::KEY_1, "1"),
+    (sys::KEY_2, "2"),
+    (sys::KEY_3, "3"),
+    (sys::KEY_4, "4"),
+    (sys::KEY_5, "5"),
+    (sys::KEY_6, "6"),
+    (sys::KEY_7, "7"),
+    (sys::KEY_8, "8"),
+    (sys::KEY_9, "9"),
+    (sys::KEY_A, "A"),
+    (sys::KEY_B, "B"),
+    (sys::KEY_C, "C"),
+    (sys::KEY_D, "D"),
+    (sys::KEY_E, "E"),
+    (sys::KEY_F, "F"),
+    (sys::KEY_G, "G"),
+    (sys::KEY_H, "H"),
+    (sys::KEY_I, "I"),
+    (sys::KEY_J, "J"),
+    (sys::KEY_K, "K"),
+    (sys::KEY_L, "L"),
+    (sys::KEY_M, "M"),
+    (sys::KEY_N, "N"),
+    (sys::KEY_O, "O"),
+    (sys::KEY_P, "P"),
+    (sys::KEY_Q, "Q"),
+    (sys::KEY_R, "R"),
+    (sys::KEY_S, "S"),
+    (sys::KEY_T, "T"),
+    (sys::KEY_U, "U"),
+    (sys::KEY_V, "V"),
+    (sys::KEY_W, "W"),
+    (sys::KEY_X, "X"),
+    (sys::KEY_Y, "Y"),
+    (sys::KEY_Z, "Z"),
+    (sys::KEY_COMMA, ","),
+    (sys::KEY_DOT, "."),
+    (sys::KEY_ENTER, "RET"),
+    (sys::KEY_EQUAL, "="),
+    (sys::KEY_ESC, "ESC"),
+    (sys::KEY_LEFTALT, "A+"),
+    (sys::KEY_LEFTBRACE, "["),
+    (sys::KEY_LEFTCTRL, "C+"),
+    (sys::KEY_LEFTSHIFT, "S+"),
+    (sys::KEY_MINUS, "-"),
+    (sys::KEY_RIGHTALT, "A+"),
+    (sys::KEY_RIGHTBRACE, "]"),
+    (sys::KEY_RIGHTCTRL, "C+"),
+    (sys::KEY_RIGHTSHIFT, "S+"),
+    (sys::KEY_SEMICOLON, ";"),
+    (sys::KEY_SLASH, "/"),
+    (sys::KEY_SPACE, "SPC"),
+    (sys::KEY_TAB, "TAB"),
+  ]);
   let remaps = [
     // 0 - Emacs
     vec![(
@@ -1508,9 +1642,22 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
     //   ),
     // ],
   ];
+  let mut ctrl_c = "C+C >".to_string();
+  let mut ctrl_x = "C+X >".to_string();
   let mut config = HashMap::new();
   for (index, remap) in remaps.iter().enumerate() {
+    let mut title_ref = match index {
+      REMAP_INDEX_CTRL_C => Some(&mut ctrl_c),
+      REMAP_INDEX_CTRL_X => Some(&mut ctrl_x),
+      _ => None,
+    };
     for (pressed_keys, keep_keys, fake_keys) in remap {
+      if let Some(title) = &mut title_ref {
+        title.push(' ');
+        for &key in pressed_keys.iter() {
+          title.push_str(key_repr.get(&key).unwrap_or(&"¬"));
+        }
+      }
       let mut pressed_keys = pressed_keys.clone();
       pressed_keys.sort();
       if !config.contains_key(&pressed_keys) {
@@ -1522,11 +1669,20 @@ fn get_config() -> HashMap<Vec<i32>, HashMap<usize, (Vec<i32>, Vec<[i32; 2]>)>>
         .insert(index, (keep_keys.clone(), fake_keys.clone()));
     }
   }
-  config
+  let mut remap_titles = HashMap::new();
+  remap_titles.insert(REMAP_INDEX_SELECT, "C+SPC".to_string());
+
+  let re = Regex::new(r"(S\+([0-9]))").unwrap();
+  remap_titles.insert(
+    REMAP_INDEX_CTRL_X,
+    re.replace_all(ctrl_x.as_str(), ShiftTranslator).to_string(),
+  );
+  remap_titles.insert(REMAP_INDEX_CTRL_C, ctrl_c);
+  (config, remap_titles)
 }
 
 fn main() {
-  let config = get_config();
+  let (config, remap_titles) = get_config();
   let mut pressed_keys = Vec::new();
   let mut wmconn = WMConn::new();
 
@@ -1689,13 +1845,12 @@ fn main() {
                   }
                   ACTION_REMAP => {
                     remap_index_next = fake_key[1] as usize;
-                    remap_title = match remap_index_next {
-                      3 => "C+SPC",
-                      4 => "C+X > 2 3 5 B E K O R T U ( ) S+O C+C C+F C+S",
-                      5 => {
-                        "C+C > T C+A C+B C+C C+D C+E C+F C+K C+N C+P C+U C+0-9"
-                      }
-                      _ => "",
+                    remap_title = if let Some(remap_title) =
+                      remap_titles.get(&remap_index_next)
+                    {
+                      remap_title
+                    } else {
+                      ""
                     };
                     if fake_keys.len() == 1 {
                       avoid_repeat = true;
